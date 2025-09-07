@@ -1,0 +1,83 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("candidate") // candidate, interviewer, admin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  interviews Interview[]
+  sessions   Session[]
+
+  @@map("users")
+}
+
+model Interview {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  role        String   // Software Engineer, Data Scientist, etc.
+  level       String   // Junior, Mid, Senior
+  duration    Int      // in minutes
+  questions   Json     // Array of questions
+  rubric      Json     // Scoring rubric
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions    Session[]
+
+  @@map("interviews")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  interviewId  String
+  status       String   @default("pending") // pending, in_progress, completed, cancelled
+  startedAt    DateTime?
+  completedAt  DateTime?
+  duration     Int?     // actual duration in minutes
+  transcript   Json?    // Full conversation transcript
+  audioData    Bytes?   // Binary data for recorded audio
+  videoData    Bytes?   // Binary data for recorded video
+  scores       Json?    // AI-generated scores
+  feedback     Json?    // Detailed feedback
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  text        String
+  type        String   // behavioral, technical, coding
+  category    String   // communication, problem_solving, etc.
+  difficulty  String   // easy, medium, hard
+  expectedAnswer String?
+  rubric      Json?    // Scoring criteria
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("questions")
+}
