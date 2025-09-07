@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Cookies from 'js-cookie'
 import { api } from '@/lib/api'
+import axios from 'axios'
 
 interface User {
   id: string
@@ -86,12 +87,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/')
   }
 
+  const generateQuestions = async (role: string, level: string) => {
+    try {
+      const res = await axios.post('http://localhost:5000/api/generate-questions', { role, level });
+      return res.data.questions;
+    } catch (error) {
+      console.error('Error generating questions:', error);
+      return [];
+    }
+  }
+
   const value = {
     user,
     loading,
     login,
     register,
-    logout
+    logout,
+    generateQuestions
   }
 
   return (

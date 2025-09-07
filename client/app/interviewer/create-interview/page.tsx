@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
-import { api } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Brain, Plus, X } from 'lucide-react';
+import axios from "axios";
+import { api } from "@/lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Brain, Plus, X } from "lucide-react";
 
 export default function CreateInterview() {
   const [title, setTitle] = useState("");
@@ -21,6 +22,25 @@ export default function CreateInterview() {
     setQuestions([...questions, ""]);
   };
 
+  async function generateQuestions() {
+    if (!role || !level) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await axios.post("http://localhost:5000/api/generate-questions", { role, level });
+      if (res.data.questions && Array.isArray(res.data.questions)) {
+        setQuestions(res.data.questions);
+      } else {
+        setError("Failed to generate questions");
+      }
+    } catch (err: any) {
+      if (err.response?.data?.error) setError(err.response.data.error);
+      else setError("Error generating questions");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const removeQuestion = (index: number) => {
     setQuestions(questions.filter((_, i) => i !== index));
   };
@@ -37,7 +57,7 @@ export default function CreateInterview() {
     setError("");
     setSuccess(false);
     try {
-      const filteredQuestions = questions.filter(q => q.trim() !== "");
+      const filteredQuestions = questions.filter((q) => q.trim() !== "");
       if (filteredQuestions.length === 0) {
         throw new Error("At least one question is required");
       }
@@ -47,7 +67,15 @@ export default function CreateInterview() {
       } catch {
         throw new Error("Rubric must be valid JSON");
       }
-      await api.post('/interviews', { title, role, level, duration, description, questions: filteredQuestions, rubric: rubricObj });
+      await api.post("/interviews", {
+        title,
+        role,
+        level,
+        duration,
+        description,
+        questions: filteredQuestions,
+        rubric: rubricObj,
+      });
       setSuccess(true);
       setTitle("");
       setRole("");
@@ -56,8 +84,9 @@ export default function CreateInterview() {
       setDescription("");
       setQuestions([""]);
       setRubric("");
-    } catch (err) {
-      if (err instanceof Error) setError(err.message);
+    } catch (err: any) {
+      if (err.response?.data?.error) setError(err.response.data.error);
+      else if (err instanceof Error) setError(err.message);
       else setError("Unknown error");
     } finally {
       setLoading(false);
@@ -81,16 +110,48 @@ export default function CreateInterview() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <input className="border rounded px-3 py-2" value={title} onChange={e => setTitle(e.target.value)} placeholder="Interview Title" required />
-              <input className="border rounded px-3 py-2" value={role} onChange={e => setRole(e.target.value)} placeholder="Role (e.g. Frontend Developer)" required />
-              <select className="border rounded px-3 py-2" value={level} onChange={e => setLevel(e.target.value)} required>
+              <input
+                className="border rounded px-3 py-2"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Interview Title"
+                minLength={3}
+                required
+              />
+              <input
+                className="border rounded px-3 py-2"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder="Role (e.g. Frontend Developer)"
+                required
+              />
+              <select
+                className="border rounded px-3 py-2"
+                value={level}
+                onChange={(e) => setLevel(e.target.value)}
+                required
+              >
                 <option value="">Select Level</option>
                 <option value="junior">Junior</option>
                 <option value="mid">Mid</option>
                 <option value="senior">Senior</option>
               </select>
-              <input className="border rounded px-3 py-2" type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} placeholder="Duration (minutes)" min={10} required />
-              <textarea className="border rounded px-3 py-2" value={description} onChange={e => setDescription(e.target.value)} placeholder="Description" />
+              <input
+                className="border rounded px-3 py-2"
+                type="number"
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                placeholder="Duration (minutes)"
+                min={15}
+                max={120}
+                required
+              />
+              <textarea
+                className="border rounded px-3 py-2"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description"
+              />
 
               <div>
                 <label className="block text-sm font-medium mb-2">Questions</label>
@@ -104,15 +165,30 @@ export default function CreateInterview() {
                       required
                     />
                     {questions.length > 1 && (
-                      <Button type="button" variant="outline" size="sm" onClick={() => removeQuestion(index)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeQuestion(index)}
+                      >
                         <X className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
                 ))}
-                <Button type="button" variant="outline" onClick={addQuestion}>
-                  <Plus className="h-4 w-4 mr-2" /> Add Question
-                </Button>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={addQuestion}>
+                    <Plus className="h-4 w-4 mr-2" /> Add Question
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="default"
+                    onClick={generateQuestions}
+                    disabled={!role || !level || loading}
+                  >
+                    {loading ? "Generating..." : "Generate with Gemini"}
+                  </Button>
+                </div>
               </div>
 
               <div>
@@ -127,7 +203,9 @@ export default function CreateInterview() {
                 />
               </div>
 
-              <Button type="submit" disabled={loading}>{loading ? "Creating..." : "Create Interview"}</Button>
+              <Button type="submit" disabled={loading}>
+                {loading ? "Creating..." : "Create Interview"}
+              </Button>
             </form>
             {success && <p className="text-green-600 mt-2">Interview created successfully!</p>}
             {error && <p className="text-red-600 mt-2">{error}</p>}

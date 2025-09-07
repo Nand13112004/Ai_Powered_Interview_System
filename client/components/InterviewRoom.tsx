@@ -29,6 +29,7 @@ interface Interview {
   role: string
   level: string
   duration: number
+  questions: string[]
 }
 
 interface InterviewRoomProps {
@@ -59,6 +60,12 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
+    if (interview.questions && interview.questions.length > 0) {
+      setCurrentQuestion(interview.questions[0])
+    }
+  }, [interview.questions])
+
+  useEffect(() => {
     initializeSocket()
     startSession()
     startTimer()
@@ -73,7 +80,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       socketService.connect()
       setIsConnected(true)
 
-      socketService.on('interview_joined', (data) => {
+      socketService.on('interview_joined', (data: { sessionId: string }) => {
         setSessionId(data.sessionId)
         setCurrentQuestion('Welcome! Let\'s begin the interview. Please introduce yourself.')
         setMessages([{
@@ -83,7 +90,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         }])
       })
 
-      socketService.on('ai_response', (data) => {
+      socketService.on('ai_response', (data: { text: string }) => {
         setCurrentQuestion(data.text)
         setMessages(prev => [...prev, {
           type: 'interviewer',
@@ -92,11 +99,11 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         }])
       })
 
-      socketService.on('ai_audio', (data) => {
+      socketService.on('ai_audio', (data: { audioData: string }) => {
         playAudio(data.audioData)
       })
 
-      socketService.on('interview_completed', (data) => {
+      socketService.on('interview_completed', (data: any) => {
         setIsCompleted(true)
         toast.success('Interview completed successfully!')
         setTimeout(() => {
@@ -104,7 +111,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         }, 3000)
       })
 
-      socketService.on('error', (error) => {
+      socketService.on('error', (error: { message: string }) => {
         toast.error(error.message)
       })
 

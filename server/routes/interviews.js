@@ -21,7 +21,7 @@ const createInterviewSchema = Joi.object({
 router.get('/', async (req, res) => {
   try {
     const interviews = await prisma.interview.findMany({
-      where: { isActive: true },
+      where: { isActive: true, userId: req.user.id },
       select: {
         id: true,
         title: true,
