@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { User, LogOut, ClipboardList, PlusCircle } from 'lucide-react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 
 export default function InterviewerDashboard() {
   const { user, logout } = useAuth();
@@ -21,10 +22,10 @@ export default function InterviewerDashboard() {
 
   const fetchInterviews = async () => {
     try {
-      const res = await fetch('/api/interviews');
-      const data = await res.json();
-      setInterviews(data.interviews || []);
+      const res = await api.get('/interviews');
+      setInterviews(res.data.interviews || []);
     } catch (error) {
+      console.error('Error fetching interviews:', error);
       setInterviews([]);
     } finally {
       setLoading(false);

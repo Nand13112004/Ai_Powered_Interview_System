@@ -1,17 +1,15 @@
-# Fix 400 Bad Request on Interview Creation
+# Fix Interview Visibility for Candidates
 
-## Completed Tasks
-- [x] Analyzed the error: Missing required fields (questions and rubric) in POST request
-- [x] Updated frontend form to include questions input (dynamic list)
-- [x] Updated frontend form to include rubric input (JSON textarea)
-- [x] Updated handleSubmit to validate and send required fields
-- [x] Fixed level input to use select dropdown with valid options (junior, mid, senior)
-- [x] Fixed server to include userId when creating interviews
+## Problem
+When interviewers create new interviews, they do not appear in the candidate dashboard because the GET /interviews route filters by userId, meaning candidates only see interviews they created themselves.
 
-## Next Steps
-- [ ] Start the server: `cd server && npm start`
-- [ ] Start the client: `cd client && npm run dev`
-- [ ] Navigate to the create interview page
-- [ ] Fill out the form including at least one question and valid JSON rubric
-- [ ] Submit the form and verify no 400 error occurs
-- [ ] Check that the interview is created successfully
+## Solution
+Modify the GET /interviews route in server/routes/interviews.js to:
+- For candidates: Return all active interviews
+- For interviewers/admins: Return only their own active interviews
+
+## Steps
+1. ✅ Update server/routes/interviews.js GET route to check user role
+2. ✅ Fix InterviewerDashboard.tsx to use proper API client instead of fetch
+3. Test that candidates can see all interviews
+4. Test that interviewers still see only their own interviews

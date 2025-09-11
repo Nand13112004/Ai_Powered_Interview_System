@@ -22,12 +22,25 @@ export default function CreateInterview() {
     setQuestions([...questions, ""]);
   };
 
+  const removeQuestion = (index: number) => {
+    setQuestions(questions.filter((_, i) => i !== index));
+  };
+
+  const updateQuestion = (index: number, value: string) => {
+    const newQuestions = [...questions];
+    newQuestions[index] = value;
+    setQuestions(newQuestions);
+  };
+
   async function generateQuestions() {
     if (!role || !level) return;
     setLoading(true);
     setError("");
     try {
-      const res = await axios.post("http://localhost:5000/api/generate-questions", { role, level });
+      const res = await axios.post("http://localhost:5000/api/generate-questions", {
+        role,
+        level,
+      });
       if (res.data.questions && Array.isArray(res.data.questions)) {
         setQuestions(res.data.questions);
       } else {
@@ -41,32 +54,25 @@ export default function CreateInterview() {
     }
   }
 
-  const removeQuestion = (index: number) => {
-    setQuestions(questions.filter((_, i) => i !== index));
-  };
-
-  const updateQuestion = (index: number, value: string) => {
-    const newQuestions = [...questions];
-    newQuestions[index] = value;
-    setQuestions(newQuestions);
-  };
-
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError("");
     setSuccess(false);
+
     try {
       const filteredQuestions = questions.filter((q) => q.trim() !== "");
       if (filteredQuestions.length === 0) {
         throw new Error("At least one question is required");
       }
+
       let rubricObj;
       try {
         rubricObj = JSON.parse(rubric);
       } catch {
         throw new Error("Rubric must be valid JSON");
       }
+
       await api.post("/interviews", {
         title,
         role,
@@ -76,7 +82,10 @@ export default function CreateInterview() {
         questions: filteredQuestions,
         rubric: rubricObj,
       });
+
       setSuccess(true);
+
+      // Reset form
       setTitle("");
       setRole("");
       setLevel("");
@@ -103,6 +112,7 @@ export default function CreateInterview() {
           </div>
         </div>
       </header>
+
       <main className="container mx-auto px-4 py-8 flex justify-center">
         <Card className="w-full max-w-lg">
           <CardHeader>
@@ -153,6 +163,7 @@ export default function CreateInterview() {
                 placeholder="Description"
               />
 
+              {/* Questions Section */}
               <div>
                 <label className="block text-sm font-medium mb-2">Questions</label>
                 {questions.map((question, index) => (
@@ -191,6 +202,7 @@ export default function CreateInterview() {
                 </div>
               </div>
 
+              {/* Rubric Section */}
               <div>
                 <label className="block text-sm font-medium mb-2">Rubric (JSON)</label>
                 <textarea
@@ -207,6 +219,7 @@ export default function CreateInterview() {
                 {loading ? "Creating..." : "Create Interview"}
               </Button>
             </form>
+
             {success && <p className="text-green-600 mt-2">Interview created successfully!</p>}
             {error && <p className="text-red-600 mt-2">{error}</p>}
           </CardContent>

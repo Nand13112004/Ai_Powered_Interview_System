@@ -26,20 +26,21 @@ model User {
 }
 
 model Interview {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   title       String
   description String?
-  role        String   // Software Engineer, Data Scientist, etc.
-  level       String   // Junior, Mid, Senior
-  duration    Int      // in minutes
-  questions   Json     // Array of questions
-  rubric      Json     // Scoring rubric
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  role        String      // Software Engineer, Data Scientist, etc.
+  level       String      // Junior, Mid, Senior
+  duration    Int         // in minutes
+  rubric      Json        // Scoring rubric
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  questions   Question[]  // 🔹 Relation: one Interview has many Questions
   sessions    Session[]
 
   @@map("interviews")
@@ -68,16 +69,21 @@ model Session {
 }
 
 model Question {
-  id          String   @id @default(cuid())
-  text        String
-  type        String   // behavioral, technical, coding
-  category    String   // communication, problem_solving, etc.
-  difficulty  String   // easy, medium, hard
+  id             String     @id @default(cuid())
+  text           String
+  type           String     // behavioral, technical, coding
+  category       String     // communication, problem_solving, etc.
+  difficulty     String     // easy, medium, hard
   expectedAnswer String?
-  rubric      Json?    // Scoring criteria
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  rubric         Json?      // Scoring criteria
+  number         Int        // 🔹 Question order (1, 2, 3...)
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relation back to Interview
+  interviewId    String
+  interview      Interview  @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
   @@map("questions")
 }

@@ -48,7 +48,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [isRecording, setIsRecording] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
-  const [currentQuestion, setCurrentQuestion] = useState('')
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  // Removed duplicate declaration of currentQuestion state
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [elapsedTime, setElapsedTime] = useState(0)
   const [isCompleted, setIsCompleted] = useState(false)
@@ -61,7 +62,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
   useEffect(() => {
     if (interview.questions && interview.questions.length > 0) {
-      setCurrentQuestion(interview.questions[0])
+      setCurrentQuestionIndex(0)
     }
   }, [interview.questions])
 
@@ -75,6 +76,37 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }, [])
 
+  useEffect(() => {
+    if (interview.questions && interview.questions.length > 0) {
+      // Add current question as interviewer message when currentQuestionIndex changes
+      const currentQ = interview.questions[currentQuestionIndex]
+      setMessages(prevMessages => {
+        // Check if current question already exists in messages
+        const exists = prevMessages.some(
+          msg => msg.type === 'interviewer' && msg.text === currentQ
+        )
+        if (!exists) {
+          const newMessages = [...prevMessages, { type: 'interviewer', text: currentQ, timestamp: new Date() }]
+          // Scroll to bottom after adding new message
+          setTimeout(() => {
+            const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
+            if (container) {
+              container.scrollTop = container.scrollHeight
+            }
+          }, 100)
+          return newMessages
+        }
+        return prevMessages
+      })
+    }
+  }, [currentQuestionIndex, interview.questions])
+
+  const goToNextQuestion = () => {
+    if (interview.questions && currentQuestionIndex < interview.questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1)
+    }
+  }
+
   const initializeSocket = () => {
     try {
       socketService.connect()
@@ -82,16 +114,28 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
       socketService.on('interview_joined', (data: { sessionId: string }) => {
         setSessionId(data.sessionId)
-        setCurrentQuestion('Welcome! Let\'s begin the interview. Please introduce yourself.')
+        setCurrentQuestionIndex(0)
+        const firstQuestion = interview.questions && interview.questions.length > 0 ? interview.questions[0] : null
         setMessages([{
           type: 'interviewer',
-          text: 'Welcome! Let\'s begin the interview. Please introduce yourself.',
+          text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
           timestamp: new Date()
         }])
+        // Scroll to bottom after setting messages
+        setTimeout(() => {
+          const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
+          if (container) {
+            container.scrollTop = container.scrollHeight
+          }
+        }, 100)
       })
 
       socketService.on('ai_response', (data: { text: string }) => {
-        setCurrentQuestion(data.text)
+        setCurrentQuestionIndex(prev => {
+          // Optionally update question index if AI response is a new question
+          // For now, just keep current index
+          return prev
+        })
         setMessages(prev => [...prev, {
           type: 'interviewer',
           text: data.text,
@@ -263,6 +307,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
   const progress = (elapsedTime / (interview.duration * 60)) * 100
 
+  const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex] || '' : ''
+
   return (
     <div className="interview-container">
       <div className="container mx-auto px-4 py-8">
@@ -277,38 +323,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               {isConnected ? 'Connected' : 'Disconnected'}
             </Badge>
             <div className="text-right">
-              <div className="text-2xl font-mono">{formatTime(elapsedTime)}</div>
-              <div className="text-sm text-gray-600">Elapsed</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Progress */}
-        <div className="mb-8">
-          <div className="flex justify-between text-sm text-gray-600 mb-2">
-            <span>Interview Progress</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <Progress value={progress} className="h-2" />
-        </div>
-
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Interview Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Current Question */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <MessageSquare className="h-5 w-5 mr-2" />
-                  Current Question
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="question-card">
-                  <p className="text-lg">{currentQuestion || 'Preparing interview...'}</p>
-                </div>
-              </CardContent>
-            </Card>
 
             {/* Messages */}
             <Card>
@@ -331,7 +345,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                       >
                         <p className="text-sm">{message.text}</p>
                         <p className="text-xs opacity-70 mt-1">
-                          {message.timestamp.toLocaleTimeString()}
+                          {new Date(message.timestamp).toLocaleTimeString()}
                         </p>
                       </div>
                     </div>
@@ -340,92 +354,103 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               </CardContent>
             </Card>
           </div>
+        </div>
 
-          {/* Controls */}
-          <div className="space-y-6">
-            {/* Audio Controls */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Audio Controls</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="audio-visualizer">
-                  {isRecording ? (
-                    <div className="flex items-center space-x-2 text-red-600">
-                      <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                      <span>Recording...</span>
-                    </div>
-                  ) : (
-                    <span className="text-gray-500">Click to start recording</span>
-                  )}
-                </div>
+        {/* Next Question Button */}
+        <div className="mt-4 flex justify-end">
+          <Button
+            onClick={goToNextQuestion}
+            disabled={!interview.questions || currentQuestionIndex >= interview.questions.length - 1}
+          >
+            Next Question
+          </Button>
+        </div>
 
-                <div className="flex space-x-2">
-                  <Button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    variant={isRecording ? 'destructive' : 'default'}
-                    className="flex-1"
-                  >
-                    {isRecording ? (
-                      <>
-                        <Square className="h-4 w-4 mr-2" />
-                        Stop
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="h-4 w-4 mr-2" />
-                        Record
-                      </>
-                    )}
-                  </Button>
-                </div>
+        {/* Controls */}
+        <div className="space-y-6">
+          {/* Audio Controls */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Audio Controls</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="audio-visualizer">
+                {isRecording ? (
+                  <div className="flex items-center space-x-2 text-red-600">
+                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                    <span>Recording...</span>
+                  </div>
+                ) : (
+                  <span className="text-gray-500">Click to start recording</span>
+                )}
+              </div>
 
-                <div className="flex items-center space-x-2 text-sm text-gray-600">
-                  {isPlaying ? (
-                    <>
-                      <Volume2 className="h-4 w-4" />
-                      <span>AI is speaking...</span>
-                    </>
-                  ) : (
-                    <>
-                      <VolumeX className="h-4 w-4" />
-                      <span>Silent</span>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
+              <div className="flex space-x-2">
                 <Button
-                  onClick={() => {
-                    const text = prompt('Type your response:')
-                    if (text) sendTextMessage(text)
-                  }}
+                  onClick={isRecording ? stopRecording : startRecording}
+                  variant={isRecording ? 'destructive' : 'default'}
+                  className="flex-1"
+                >
+                  {isRecording ? (
+                    <>
+                      <Square className="h-4 w-4 mr-2" />
+                      Stop
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="h-4 w-4 mr-2" />
+                      Record
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                {isPlaying ? (
+                  <>
+                    <Volume2 className="h-4 w-4" />
+                    <span>AI is speaking...</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX className="h-4 w-4" />
+                    <span>Silent</span>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button
+                onClick={() => {
+                  const text = prompt('Type your response:')
+                  if (text) sendTextMessage(text)
+                }}
+                variant="outline"
+                className="w-full"
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Type Response
+              </Button>
+
+              {!isCompleted && (
+                <Button
+                  onClick={completeInterview}
                   variant="outline"
                   className="w-full"
                 >
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  Type Response
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Complete Interview
                 </Button>
-
-                {!isCompleted && (
-                  <Button
-                    onClick={completeInterview}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Complete Interview
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
+              )}
+            </CardContent>
+          </Card>
 
             {/* Interview Info */}
             <Card>

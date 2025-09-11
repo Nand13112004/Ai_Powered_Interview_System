@@ -32,7 +32,8 @@ router.get('/', async (req, res) => {
             title: true,
             role: true,
             level: true,
-            duration: true
+            duration: true,
+            questions: true
           }
         }
       },
