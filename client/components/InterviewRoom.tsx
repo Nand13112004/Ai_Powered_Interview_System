@@ -22,6 +22,12 @@ import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
 
+interface Question {
+  id: string
+  text: string
+  number: number
+}
+
 interface Interview {
   id: string
   title: string
@@ -29,7 +35,7 @@ interface Interview {
   role: string
   level: string
   duration: number
-  questions: string[]
+  questions: Question[]
 }
 
 interface InterviewRoomProps {
@@ -48,7 +54,9 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [isRecording, setIsRecording] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
+  const [typedResponse, setTypedResponse] = useState('')
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [answeredByQuestionId, setAnsweredByQuestionId] = useState<Record<string, boolean>>({})
   // Removed duplicate declaration of currentQuestion state
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [elapsedTime, setElapsedTime] = useState(0)
@@ -59,6 +67,19 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const streamRef = useRef<MediaStream | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const pendingJoinSessionIdRef = useRef<string | null>(null)
+
+  const emitWhenConnected = (event: string, payload: any, attempt: number = 0) => {
+    if (socketService.isConnected()) {
+      socketService.emit(event, payload)
+      return
+    }
+    if (attempt > 20) {
+      toast.error('Connection issue. Please refresh and try again.')
+      return
+    }
+    setTimeout(() => emitWhenConnected(event, payload, attempt + 1), 200)
+  }
 
   useEffect(() => {
     if (interview.questions && interview.questions.length > 0) {
@@ -79,31 +100,45 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   useEffect(() => {
     if (interview.questions && interview.questions.length > 0) {
       // Add current question as interviewer message when currentQuestionIndex changes
-      const currentQ = interview.questions[currentQuestionIndex]
+      const currentQ = interview.questions[currentQuestionIndex]?.text
       setMessages(prevMessages => {
         // Check if current question already exists in messages
-        const exists = prevMessages.some(
-          msg => msg.type === 'interviewer' && msg.text === currentQ
-        )
-        if (!exists) {
-          const newMessages = [...prevMessages, { type: 'interviewer', text: currentQ, timestamp: new Date() }]
-          // Scroll to bottom after adding new message
-          setTimeout(() => {
-            const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
-            if (container) {
-              container.scrollTop = container.scrollHeight
-            }
-          }, 100)
-          return newMessages
-        }
-        return prevMessages
-      })
+          const exists = prevMessages.some(
+            (msg): msg is Message => (msg.type === 'interviewer' || msg.type === 'candidate') && msg.text === currentQ
+          )
+          if (!exists) {
+            const newMessages: Message[] = [...prevMessages, { type: 'interviewer', text: currentQ || '', timestamp: new Date() }]
+            // Scroll to bottom after adding new message
+            setTimeout(() => {
+              const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
+              if (container) {
+                container.scrollTop = container.scrollHeight
+              }
+            }, 100)
+            return newMessages
+          }
+          return prevMessages
+        })
     }
   }, [currentQuestionIndex, interview.questions])
 
   const goToNextQuestion = () => {
-    if (interview.questions && currentQuestionIndex < interview.questions.length - 1) {
+    if (!interview.questions || interview.questions.length === 0) return
+
+    const currentQ = interview.questions[currentQuestionIndex]
+    if (typedResponse.trim()) {
+      // Auto-submit typed response before moving on
+      sendTextMessage(typedResponse.trim())
+      setTypedResponse('')
+    }
+
+    // Move to next if exists
+    if (currentQuestionIndex < interview.questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1)
+    } else {
+      // Last question → complete interview
+      toast.success('All questions answered. Completing interview...')
+      completeInterview()
     }
   }
 
@@ -115,7 +150,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       socketService.on('interview_joined', (data: { sessionId: string }) => {
         setSessionId(data.sessionId)
         setCurrentQuestionIndex(0)
-        const firstQuestion = interview.questions && interview.questions.length > 0 ? interview.questions[0] : null
+        const firstQuestion = interview.questions && interview.questions.length > 0 ? interview.questions[0].text : null
         setMessages([{
           type: 'interviewer',
           text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
@@ -128,6 +163,14 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
             container.scrollTop = container.scrollHeight
           }
         }, 100)
+      })
+
+      // If connect occurs after we requested a join, send it now
+      ;(socketService as any).socket?.on?.('connect', () => {
+        if (pendingJoinSessionIdRef.current) {
+          socketService.emit('join_interview', { sessionId: pendingJoinSessionIdRef.current })
+          pendingJoinSessionIdRef.current = null
+        }
       })
 
       socketService.on('ai_response', (data: { text: string }) => {
@@ -172,7 +215,12 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       })
       
       const sessionId = response.data.session.id
-      socketService.emit('join_interview', { sessionId })
+      if (socketService.isConnected()) {
+        socketService.emit('join_interview', { sessionId })
+      } else {
+        pendingJoinSessionIdRef.current = sessionId
+        emitWhenConnected('join_interview', { sessionId })
+      }
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to start session')
     }
@@ -231,8 +279,14 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         socketService.emit('audio_data', {
           sessionId,
           audioBlob: base64Audio,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          questionId: interview.questions[currentQuestionIndex]?.id
         })
+
+        const qId = interview.questions[currentQuestionIndex]?.id
+        if (qId) {
+          setAnsweredByQuestionId(prev => ({ ...prev, [qId]: true }))
+        }
       }
     }
     reader.readAsDataURL(audioBlob)
@@ -250,8 +304,14 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     socketService.emit('text_message', {
       sessionId,
       message: text.trim(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      questionId: interview.questions[currentQuestionIndex]?.id
     })
+
+    const qId = interview.questions[currentQuestionIndex]?.id
+    if (qId) {
+      setAnsweredByQuestionId(prev => ({ ...prev, [qId]: true }))
+    }
   }
 
   const playAudio = (audioData: string) => {
@@ -277,10 +337,21 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const completeInterview = () => {
     if (!sessionId) return
 
-    socketService.emit('complete_interview', {
+    // If there is unsent typed text, send it before completing
+    if (typedResponse.trim()) {
+      sendTextMessage(typedResponse.trim())
+      setTypedResponse('')
+    }
+
+    emitWhenConnected('complete_interview', {
       sessionId,
       finalTranscript: messages
     })
+
+    // Redirect to dashboard after short delay to allow server to process
+    setTimeout(() => {
+      window.location.href = '/dashboard'
+    }, 500)
   }
 
   const cleanup = () => {
@@ -307,7 +378,9 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
   const progress = (elapsedTime / (interview.duration * 60)) * 100
 
-  const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex] || '' : ''
+  const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex]?.text || '' : ''
+  const currentQuestionId = interview.questions ? interview.questions[currentQuestionIndex]?.id : undefined
+  const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
 
   return (
     <div className="interview-container">
@@ -325,44 +398,20 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
             <div className="text-right">
 
             {/* Messages */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Conversation</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4 max-h-96 overflow-y-auto">
-                  {messages.map((message, index) => (
-                    <div
-                      key={index}
-                      className={`flex ${message.type === 'candidate' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                          message.type === 'candidate'
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-200 text-gray-900'
-                        }`}
-                      >
-                        <p className="text-sm">{message.text}</p>
-                        <p className="text-xs opacity-70 mt-1">
-                          {new Date(message.timestamp).toLocaleTimeString()}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            
           </div>
         </div>
 
-        {/* Next Question Button */}
-        <div className="mt-4 flex justify-end">
+        {/* Current Question + Next */}
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-lg font-semibold text-gray-800">
+            {currentQuestion || 'Waiting for questions...'}
+          </div>
           <Button
             onClick={goToNextQuestion}
-            disabled={!interview.questions || currentQuestionIndex >= interview.questions.length - 1}
+            disabled={!interview.questions ? true : (!isCurrentAnswered && !typedResponse.trim())}
           >
-            Next Question
+            {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
           </Button>
         </div>
 
@@ -427,17 +476,29 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button
-                onClick={() => {
-                  const text = prompt('Type your response:')
-                  if (text) sendTextMessage(text)
-                }}
-                variant="outline"
-                className="w-full"
-              >
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Type Response
-              </Button>
+              <div className="space-y-2">
+                <textarea
+                  value={typedResponse}
+                  onChange={(e) => setTypedResponse(e.target.value)}
+                  placeholder="Type your response here..."
+                  className="w-full border rounded p-2 text-sm"
+                  rows={3}
+                />
+                <Button
+                  onClick={() => {
+                    const text = typedResponse
+                    if (text.trim()) {
+                      sendTextMessage(text)
+                      setTypedResponse('')
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full"
+                >
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  Send Response
+                </Button>
+              </div>
 
               {!isCompleted && (
                 <Button

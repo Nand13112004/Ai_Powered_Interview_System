@@ -15,6 +15,9 @@ export default function InterviewerDashboard() {
   const [interviews, setInterviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  const [showResponsesFor, setShowResponsesFor] = useState<string | null>(null);
+  const [responses, setResponses] = useState<any[]>([]);
+  const [responsesLoading, setResponsesLoading] = useState(false);
 
   useEffect(() => {
     fetchInterviews();
@@ -29,6 +32,35 @@ export default function InterviewerDashboard() {
       setInterviews([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchResponses = async (interviewId: string) => {
+    try {
+      setResponsesLoading(true);
+      const res = await api.get(`/interviews/${interviewId}/responses`);
+      setResponses(res.data.responses || []);
+      setShowResponsesFor(interviewId);
+    } catch (error) {
+      console.error('Error fetching responses:', error);
+    } finally {
+      setResponsesLoading(false);
+    }
+  };
+
+  const playAudioBase64 = (b64?: string) => {
+    if (!b64) return;
+    try {
+      const byteChars = atob(b64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'audio/webm' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play();
+    } catch (e) {
+      console.error('Failed to play audio', e);
     }
   };
 
@@ -110,6 +142,7 @@ export default function InterviewerDashboard() {
                       <th className="px-4 py-2 text-left">Level</th>
                       <th className="px-4 py-2 text-left">Duration</th>
                       <th className="px-4 py-2 text-left">Created</th>
+                      <th className="px-4 py-2 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -120,6 +153,11 @@ export default function InterviewerDashboard() {
                         <td className="px-4 py-2">{interview.level}</td>
                         <td className="px-4 py-2">{interview.duration} min</td>
                         <td className="px-4 py-2">{new Date(interview.createdAt).toLocaleDateString()}</td>
+                        <td className="px-4 py-2">
+                          <Button size="sm" variant="outline" onClick={() => fetchResponses(interview.id)}>
+                            View Details
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -128,6 +166,54 @@ export default function InterviewerDashboard() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* Responses Modal */}
+        {showResponsesFor && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <h3 className="font-semibold">Responses</h3>
+                <Button variant="outline" size="sm" onClick={() => setShowResponsesFor(null)}>Close</Button>
+              </div>
+              <div className="p-4 overflow-auto">
+                {responsesLoading ? (
+                  <p>Loading...</p>
+                ) : responses.length === 0 ? (
+                  <p>No responses yet.</p>
+                ) : (
+                  <table className="min-w-full bg-white border rounded text-sm">
+                    <thead>
+                      <tr>
+                        <th className="px-3 py-2 text-left">Candidate</th>
+                        <th className="px-3 py-2 text-left">Question</th>
+                        <th className="px-3 py-2 text-left">Answer (text)</th>
+                        <th className="px-3 py-2 text-left">Audio</th>
+                        <th className="px-3 py-2 text-left">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {responses.map((r, idx) => (
+                        <tr key={idx} className="border-t">
+                          <td className="px-3 py-2">{r.user?.name || r.user?.email}</td>
+                          <td className="px-3 py-2">{r.question?.number}. {r.question?.text}</td>
+                          <td className="px-3 py-2 whitespace-pre-wrap">{r.text || '-'}</td>
+                          <td className="px-3 py-2">
+                            {r.audioData ? (
+                              <Button size="sm" onClick={() => playAudioBase64(r.audioData)}>Play</Button>
+                            ) : (
+                              <span className="text-gray-400">No audio</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">{new Date(r.createdAt).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

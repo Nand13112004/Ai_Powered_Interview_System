@@ -93,7 +93,7 @@ const setupSocketHandlers = (io) => {
     // Handle audio data from client
     socket.on('audio_data', async (data) => {
       try {
-        const { sessionId, audioBlob, timestamp } = data;
+        const { sessionId, audioBlob, timestamp, questionId } = data;
         
         // Verify user is in the interview room
         const rooms = Array.from(socket.rooms);
@@ -103,7 +103,7 @@ const setupSocketHandlers = (io) => {
         }
 
         // Process audio data (send to AI for transcription and response)
-        await handleInterviewSession(socket, sessionId, audioBlob, timestamp);
+        await handleInterviewSession(socket, sessionId, audioBlob, timestamp, null, questionId);
         
       } catch (error) {
         logger.error('Error processing audio data:', error);
@@ -114,7 +114,7 @@ const setupSocketHandlers = (io) => {
     // Handle text messages (fallback for audio issues)
     socket.on('text_message', async (data) => {
       try {
-        const { sessionId, message, timestamp } = data;
+        const { sessionId, message, timestamp, questionId } = data;
         
         // Verify user is in the interview room
         const rooms = Array.from(socket.rooms);
@@ -124,7 +124,7 @@ const setupSocketHandlers = (io) => {
         }
 
         // Process text message
-        await handleInterviewSession(socket, sessionId, null, timestamp, message);
+        await handleInterviewSession(socket, sessionId, null, timestamp, message, questionId);
         
       } catch (error) {
         logger.error('Error processing text message:', error);

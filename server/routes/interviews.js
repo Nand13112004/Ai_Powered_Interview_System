@@ -57,7 +57,7 @@ router.get("/:id", async (req, res) => {
       where: { id },
       include: {
         questions: {
-          orderBy: { createdAt: "asc" },
+          orderBy: { number: "asc" },
         },
       },
     });
@@ -70,6 +70,35 @@ router.get("/:id", async (req, res) => {
   } catch (error) {
     logger.error("Error fetching interview:", error);
     res.status(500).json({ error: "Failed to fetch interview" });
+  }
+});
+
+// ✅ Get responses for an interview (interviewer/admin only)
+router.get('/:id/responses', async (req, res) => {
+  try {
+    if (req.user.role === 'candidate') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { id } = req.params;
+
+    const responsesRaw = await prisma.response.findMany({
+      where: { interviewId: id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        question: { select: { id: true, text: true, number: true } },
+        session: { select: { id: true } }
+      }
+    });
+    const responses = responsesRaw.map(r => ({
+      ...r,
+      audioData: r.audioData ? Buffer.from(r.audioData).toString('base64') : null
+    }));
+    res.json({ responses });
+  } catch (error) {
+    logger.error('Error fetching responses:', error);
+    res.status(500).json({ error: 'Failed to fetch responses' });
   }
 });
 

@@ -7,14 +7,20 @@ const prisma = new PrismaClient();
 // Store active interview sessions in memory (in production, use Redis)
 const activeSessions = new Map();
 
-const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, textMessage = null) => {
+const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, textMessage = null, questionId = null) => {
   try {
     // Get or create session state
     let sessionState = activeSessions.get(sessionId);
     if (!sessionState) {
       const session = await prisma.session.findFirst({
         where: { id: sessionId },
-        include: { interview: true }
+        include: { 
+          interview: { 
+            include: { 
+              questions: { orderBy: { number: 'asc' } } 
+            } 
+          } 
+        }
       });
       
       if (!session) {
@@ -41,6 +47,22 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
         // Convert audio blob to buffer and transcribe
         const audioBuffer = Buffer.from(audioBlob, 'base64');
         transcribedText = await aiService.transcribeAudio(audioBuffer);
+        // Persist response with audio
+        const currentQuestion = questionId 
+          ? sessionState.interview.questions.find(q => q.id === questionId)
+          : sessionState.interview.questions[sessionState.currentQuestionIndex];
+        if (currentQuestion) {
+          await prisma.response.create({
+            data: {
+              userId: socket.userId,
+              interviewId: sessionState.interview.id,
+              sessionId,
+              questionId: currentQuestion.id,
+              text: transcribedText || null,
+              audioData: audioBuffer
+            }
+          });
+        }
       } catch (error) {
         logger.error('Transcription error:', error);
         socket.emit('error', { message: 'Failed to transcribe audio' });
@@ -48,6 +70,21 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
       }
     } else if (textMessage) {
       transcribedText = textMessage;
+      // Persist text-only response
+      const currentQuestion = questionId 
+        ? sessionState.interview.questions.find(q => q.id === questionId)
+        : sessionState.interview.questions[sessionState.currentQuestionIndex];
+      if (currentQuestion) {
+        await prisma.response.create({
+          data: {
+            userId: socket.userId,
+            interviewId: sessionState.interview.id,
+            sessionId,
+            questionId: currentQuestion.id,
+            text: transcribedText
+          }
+        });
+      }
     }
 
     if (!transcribedText.trim()) {
@@ -101,6 +138,14 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
         transcript: sessionState.transcript
       }
     });
+
+    // Advance to next question if provided question was answered
+    if (questionId) {
+      const idx = sessionState.interview.questions.findIndex(q => q.id === questionId);
+      if (idx >= 0 && idx === sessionState.currentQuestionIndex && idx < sessionState.interview.questions.length - 1) {
+        sessionState.currentQuestionIndex = idx + 1;
+      }
+    }
 
   } catch (error) {
     logger.error('Error in interview handler:', error);

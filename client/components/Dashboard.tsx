@@ -22,9 +22,15 @@ import {
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { api } from '@/lib/api'
-import InterviewRoom from './InterviewRoom'
+import { useRouter } from 'next/navigation'
 import SessionHistory from './SessionHistory'
 import Analytics from './Analytics'
+
+interface Question {
+  id: string
+  text: string
+  number: number
+}
 
 interface Interview {
   id: string
@@ -34,6 +40,7 @@ interface Interview {
   level: string
   duration: number
   createdAt: string
+  questions?: Question[]
 }
 
 interface Session {
@@ -49,11 +56,11 @@ interface Session {
 
 export default function Dashboard() {
   const { user, logout } = useAuth()
+  const router = useRouter()
   const [interviews, setInterviews] = useState<Interview[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
-  const [selectedInterview, setSelectedInterview] = useState<Interview | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -81,9 +88,7 @@ export default function Dashboard() {
       const response = await api.post('/sessions', {
         interviewId: interview.id
       })
-      
-      setSelectedInterview(interview)
-      setActiveTab('interview')
+      router.push(`/interviewroom/${interview.id}`)
       toast.success('Interview session started!')
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to start interview')
@@ -136,9 +141,8 @@ export default function Dashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="interview">Interview</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
           </TabsList>
@@ -272,31 +276,7 @@ export default function Dashboard() {
             )}
           </TabsContent>
 
-          <TabsContent value="interview">
-            {selectedInterview ? (
-              <InterviewRoom 
-                interview={selectedInterview}
-                onComplete={() => {
-                  setSelectedInterview(null)
-                  setActiveTab('overview')
-                  fetchData() // Refresh data
-                }}
-              />
-            ) : (
-              <div className="text-center py-12">
-                <Brain className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                  No Active Interview
-                </h3>
-                <p className="text-gray-600 mb-6">
-                  Select an interview from the overview tab to get started
-                </p>
-                <Button onClick={() => setActiveTab('overview')}>
-                  Browse Interviews
-                </Button>
-              </div>
-            )}
-          </TabsContent>
+          
 
           <TabsContent value="history">
             <SessionHistory sessions={sessions} />

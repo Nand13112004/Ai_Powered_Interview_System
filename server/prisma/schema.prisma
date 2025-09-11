@@ -21,6 +21,7 @@ model User {
 
   interviews Interview[]
   sessions   Session[]
+  responses  Response[]
 
   @@map("users")
 }
@@ -42,6 +43,7 @@ model Interview {
 
   questions   Question[]  // 🔹 Relation: one Interview has many Questions
   sessions    Session[]
+  responses   Response[]
 
   @@map("interviews")
 }
@@ -64,6 +66,7 @@ model Session {
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  responses Response[]
 
   @@map("sessions")
 }
@@ -84,6 +87,26 @@ model Question {
   // Relation back to Interview
   interviewId    String
   interview      Interview  @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  responses      Response[]
 
   @@map("questions")
+}
+
+// Stores candidate responses per question (text and optional audio)
+model Response {
+  id           String   @id @default(cuid())
+  userId       String
+  interviewId  String
+  sessionId    String
+  questionId   String
+  text         String?
+  audioData    Bytes?
+  createdAt    DateTime @default(now())
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interview    Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  session      Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question     Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("responses")
 }
