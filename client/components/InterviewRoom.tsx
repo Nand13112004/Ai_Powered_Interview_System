@@ -62,6 +62,12 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [elapsedTime, setElapsedTime] = useState(0)
   const [isCompleted, setIsCompleted] = useState(false)
+  const [incidentCount, setIncidentCount] = useState(0)
+  const INCIDENT_THRESHOLD = 5
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const faceCountRef = useRef<number>(0)
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -69,6 +75,14 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const pendingJoinSessionIdRef = useRef<string | null>(null)
+
+  // Strict mode configuration
+  const STRICT_MODE = true
+  const fatalIncidents = new Set([
+    'multiple_faces_detected',
+    'speech_with_multiple_faces',
+    'devtools_suspected'
+  ])
 
   const emitWhenConnected = (event: string, payload: any, attempt: number = 0) => {
     if (socketService.isConnected()) {
@@ -92,9 +106,34 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   }, [interview.questions])
 
   useEffect(() => {
-    initializeSocket()
-    startSession()
-    startTimer()
+    const ensurePermissions = async () => {
+      try {
+        // Request mic + cam up-front to simulate real proctored environment
+        const cam = navigator.mediaDevices.getUserMedia({ video: true })
+        const mic = navigator.mediaDevices.getUserMedia({ audio: true })
+        await Promise.allSettled([cam, mic])
+      } catch (_) {
+        toast.error('Camera/Microphone permission required for proctored interview')
+      }
+    }
+
+    const enterFullscreen = async () => {
+      try {
+        if (STRICT_MODE && document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen()
+        }
+      } catch (_) {}
+    }
+
+    const boot = async () => {
+      await ensurePermissions()
+      await enterFullscreen()
+      initializeSocket()
+      startSession()
+      startTimer()
+    }
+
+    boot()
 
     // Handle browser close/refresh
     const handleBeforeUnload = () => {
@@ -110,11 +149,269 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
     window.addEventListener('beforeunload', handleBeforeUnload)
 
+    // Strict mode: fullscreen exit listener
+    const onFullscreenChange = () => {
+      const inFs = !!document.fullscreenElement
+      if (!inFs && STRICT_MODE) {
+        reportIncident('fullscreen_exit')
+        toast.error('Fullscreen is required. Ending interview.')
+        completeInterview()
+      }
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+
     return () => {
       cleanup()
       window.removeEventListener('beforeunload', handleBeforeUnload)
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
     }
   }, [])
+
+  // Proctoring: report helper
+  const reportIncident = (type: string, meta: Record<string, any> = {}) => {
+    try {
+      setIncidentCount((c) => c + 1)
+      if (sessionId) {
+        emitWhenConnected('proctor_event', {
+          sessionId,
+          type,
+          meta,
+          at: new Date().toISOString()
+        })
+      }
+      // If too many incidents, auto-complete
+      setTimeout(() => {
+        if (STRICT_MODE && fatalIncidents.has(type)) {
+          toast.error('Strict violation detected. Ending interview.')
+          emitWhenConnected('proctor_threshold_breach', {
+            sessionId,
+            incidents: incidentCount + 1,
+            reason: type
+          })
+          completeInterview()
+          return
+        }
+        if (!isCompleted && (incidentCount + 1 >= INCIDENT_THRESHOLD)) {
+          toast.error('Too many proctoring incidents. Ending interview.')
+          emitWhenConnected('proctor_threshold_breach', {
+            sessionId,
+            incidents: incidentCount + 1
+          })
+          completeInterview()
+        }
+      }, 0)
+    } catch (err) {
+      console.warn('Failed to report proctor incident', err)
+    }
+  }
+
+  // Proctoring: listeners (tab switch, copy/paste, context menu, devtools)
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        reportIncident('tab_hidden')
+        if (STRICT_MODE) {
+          toast.error('Tab switch detected. Ending interview.')
+          completeInterview()
+        }
+      }
+    }
+    const onBlur = () => {
+      reportIncident('window_blur')
+      if (STRICT_MODE) {
+        toast.error('Window focus lost. Ending interview.')
+        completeInterview()
+      }
+    }
+    const onCopy = (e: ClipboardEvent) => reportIncident('copy', { length: (e as any).clipboardData?.getData('text')?.length })
+    const onPaste = (e: ClipboardEvent) => reportIncident('paste', { length: (e as any).clipboardData?.getData('text')?.length })
+    const onContext = (e: MouseEvent) => reportIncident('contextmenu')
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'v' || e.key === 'x')) {
+        reportIncident('shortcut', { key: e.key })
+      }
+    }
+    // Devtools heuristic: large devtools gap
+    const checkDevtools = () => {
+      const gap = Math.abs((window.outerWidth - window.innerWidth)) + Math.abs((window.outerHeight - window.innerHeight))
+      if (gap > 200) {
+        reportIncident('devtools_suspected', { gap })
+      }
+    }
+    const devtoolsInterval = window.setInterval(checkDevtools, 5000)
+
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('copy', onCopy as any)
+    window.addEventListener('paste', onPaste as any)
+    window.addEventListener('contextmenu', onContext)
+    window.addEventListener('keydown', onKey)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('copy', onCopy as any)
+      window.removeEventListener('paste', onPaste as any)
+      window.removeEventListener('contextmenu', onContext)
+      window.removeEventListener('keydown', onKey)
+      window.clearInterval(devtoolsInterval)
+    }
+  }, [sessionId])
+
+  // Webcam-based face presence (best-effort)
+  useEffect(() => {
+    let visionInterval: number | null = null
+    const startVision = async () => {
+      try {
+        // Try using FaceDetector API if available
+        const FaceDetectorCtor: any = (window as any).FaceDetector
+        // Ensure camera stream
+        if (!cameraStreamRef.current) {
+          cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        }
+        const video = document.createElement('video')
+        video.srcObject = cameraStreamRef.current as any
+        video.muted = true
+        await video.play()
+
+        if (FaceDetectorCtor) {
+          const detector = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 3 })
+          const tick = async () => {
+            try {
+              const faces = await detector.detect(video)
+              const count = Array.isArray(faces) ? faces.length : 0
+              faceCountRef.current = count
+              if (count === 0) {
+                reportIncident('no_face_detected')
+              } else if (count > 1) {
+                reportIncident('multiple_faces_detected', { count })
+              }
+            } catch (e) {
+              // ignore detection errors
+            }
+          }
+          visionInterval = window.setInterval(tick, 4000)
+          return
+        }
+
+        // Fallback: TensorFlow.js BlazeFace via CDN
+        const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+          const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null
+          if (existing) {
+            if ((existing as any)._loaded) return resolve()
+            existing.addEventListener('load', () => resolve())
+            existing.addEventListener('error', () => reject(new Error('script load error')))
+            return
+          }
+          const s = document.createElement('script')
+          s.src = src
+          s.async = true
+          ;(s as any)._loaded = false
+          s.onload = () => { (s as any)._loaded = true; resolve() }
+          s.onerror = () => reject(new Error('script load error'))
+          document.head.appendChild(s)
+        })
+
+        try {
+          await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js')
+          await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.js')
+          // @ts-ignore
+          const model = await (window as any).blazeface.load()
+          const tick = async () => {
+            try {
+              // @ts-ignore
+              const preds = await model.estimateFaces(video, false)
+              const count = Array.isArray(preds) ? preds.length : 0
+              faceCountRef.current = count
+              if (count === 0) {
+                reportIncident('no_face_detected')
+              } else if (count > 1) {
+                reportIncident('multiple_faces_detected', { count })
+              }
+            } catch (e) {
+              // ignore detection errors
+            }
+          }
+          visionInterval = window.setInterval(tick, 5000)
+        } catch (e) {
+          // Fallback load failed; silently ignore
+        }
+      } catch (err) {
+        // Camera permission denied or unsupported; ignore silently
+      }
+    }
+
+    startVision()
+
+    return () => {
+      if (visionInterval) window.clearInterval(visionInterval)
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop())
+        cameraStreamRef.current = null
+      }
+    }
+  }, [sessionId])
+
+  // Audio analysis: detect speech when no face or multiple faces
+  useEffect(() => {
+    let audioInterval: number | null = null
+    const startAudioAnalysis = async () => {
+      try {
+        // Reuse existing audio stream if available
+        if (!streamRef.current) {
+          // If not yet captured, try to get mic access (best-effort)
+          try {
+            streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          } catch (_) {
+            return
+          }
+        }
+        const context = new (window.AudioContext || (window as any).webkitAudioContext)()
+        audioContextRef.current = context
+        const source = context.createMediaStreamSource(streamRef.current)
+        const analyser = context.createAnalyser()
+        analyser.fftSize = 1024
+        analyserRef.current = analyser
+        source.connect(analyser)
+        const data = new Uint8Array(analyser.frequencyBinCount)
+
+        const check = () => {
+          if (!analyserRef.current) return
+          analyserRef.current.getByteTimeDomainData(data)
+          // Compute RMS
+          let sum = 0
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128
+            sum += v * v
+          }
+          const rms = Math.sqrt(sum / data.length)
+          const speaking = rms > 0.06 // heuristic threshold
+          if (speaking) {
+            const faces = faceCountRef.current
+            if (faces === 0) {
+              reportIncident('speech_without_face')
+            } else if (faces > 1) {
+              reportIncident('speech_with_multiple_faces', { faces })
+            }
+          }
+        }
+
+        audioInterval = window.setInterval(check, 2000)
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    startAudioAnalysis()
+
+    return () => {
+      if (audioInterval) window.clearInterval(audioInterval)
+      if (audioContextRef.current) {
+        try { audioContextRef.current.close() } catch (_) {}
+        audioContextRef.current = null
+      }
+    }
+  }, [sessionId])
 
   useEffect(() => {
     if (interview.questions && interview.questions.length > 0) {
@@ -470,6 +767,10 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               <div className="text-center">
                 <div className="text-sm text-gray-500 font-medium">Progress</div>
                 <div className="text-xl font-bold text-gray-900">{currentQuestionIndex + 1}/{interview.questions?.length || 0}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-sm text-gray-500 font-medium">Incidents</div>
+                <div className={`text-xl font-bold ${incidentCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{incidentCount}</div>
               </div>
               <Badge 
                 variant={isConnected ? 'default' : 'destructive'}

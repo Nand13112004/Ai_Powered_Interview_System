@@ -245,6 +245,51 @@ const setupSocketHandlers = (io) => {
       }
     });
 
+    // Proctoring: receive client incidents
+    socket.on('proctor_event', async (payload) => {
+      try {
+        const { sessionId, type, meta, at } = payload || {}
+        logger.info(`Proctor event: ${type} for session ${sessionId} by ${socket.user?.email}`, { meta, at })
+        if (prisma && sessionId) {
+          try {
+            await prisma.proctorEvent?.create?.({
+              data: {
+                sessionId,
+                type,
+                metadata: meta ? JSON.stringify(meta) : '{}',
+                createdAt: at ? new Date(at) : new Date()
+              }
+            })
+          } catch (dbErr) {
+            logger.warn('Proctor event DB save failed (table may not exist):', dbErr.message)
+          }
+        }
+      } catch (err) {
+        logger.error('Error handling proctor_event:', err)
+      }
+    })
+
+    // Proctoring: threshold breach
+    socket.on('proctor_threshold_breach', async (payload) => {
+      try {
+        const { sessionId, incidents } = payload || {}
+        logger.warn(`Proctor threshold breach for session ${sessionId} by ${socket.user?.email}. Incidents=${incidents}`)
+        if (prisma && sessionId) {
+          try {
+            await prisma.session.update({
+              where: { id: sessionId },
+              data: { status: 'completed', completedAt: new Date() }
+            })
+          } catch (e) {
+            logger.error('Failed to mark session completed on threshold breach:', e)
+          }
+        }
+        socket.emit('interview_completed', { sessionId, reason: 'proctor_threshold' })
+      } catch (err) {
+        logger.error('Error handling proctor_threshold_breach:', err)
+      }
+    })
+
     // Handle disconnection
     socket.on('disconnect', async (reason) => {
       logger.info(`User disconnected: ${socket.user.email} (${socket.id}) - ${reason}`);
