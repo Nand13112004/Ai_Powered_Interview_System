@@ -4,7 +4,15 @@ const { PrismaClient } = require("@prisma/client");
 const { logger } = require("../utils/logger");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+
+// Initialize Prisma client with error handling
+let prisma;
+try {
+  prisma = new PrismaClient();
+} catch (error) {
+  logger.error('Failed to initialize Prisma client in interviews routes:', error);
+  prisma = null;
+}
 
 // Validation schema
 const createInterviewSchema = Joi.object({

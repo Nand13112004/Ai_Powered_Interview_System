@@ -115,22 +115,32 @@ export default function Dashboard() {
     : 0
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="container mx-auto px-4 py-4">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Brain className="h-8 w-8 text-blue-600" />
-              <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+              <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                <Brain className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+                <p className="text-gray-600">Welcome back, {user?.name || user?.email}!</p>
+              </div>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-3 px-4 py-2 bg-gray-50 rounded-xl">
                 <User className="h-5 w-5 text-gray-500" />
-                <span className="text-sm text-gray-700">{user?.name}</span>
-                <Badge variant="secondary">{user?.role}</Badge>
+                <span className="text-sm font-medium text-gray-700">{user?.name}</span>
+                <Badge className="bg-blue-100 text-blue-800 border-blue-200">{user?.role}</Badge>
               </div>
-              <Button variant="outline" size="sm" onClick={handleLogout}>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleLogout}
+                className="border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+              >
                 <LogOut className="h-4 w-4 mr-2" />
                 Logout
               </Button>
@@ -141,7 +151,7 @@ export default function Dashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-3 rounded-xl bg-white/70 backdrop-blur p-1 shadow-sm">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -150,7 +160,7 @@ export default function Dashboard() {
           <TabsContent value="overview" className="space-y-6">
             {/* Stats Cards */}
             <div className="grid md:grid-cols-4 gap-6">
-              <Card>
+              <Card className="rounded-2xl border-gray-200/60 shadow-md hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total Sessions</CardTitle>
                   <History className="h-4 w-4 text-muted-foreground" />
@@ -163,7 +173,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="rounded-2xl border-gray-200/60 shadow-md hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Practice Time</CardTitle>
                   <Clock className="h-4 w-4 text-muted-foreground" />
@@ -176,7 +186,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="rounded-2xl border-gray-200/60 shadow-md hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Average Score</CardTitle>
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -189,7 +199,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="rounded-2xl border-gray-200/60 shadow-md hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Available Interviews</CardTitle>
                   <Brain className="h-4 w-4 text-muted-foreground" />
@@ -208,11 +218,20 @@ export default function Dashboard() {
               <h2 className="text-2xl font-bold mb-6">Available Interviews</h2>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {interviews.map((interview) => (
-                  <Card key={interview.id} className="hover:shadow-lg transition-shadow">
+                  <Card key={interview.id} className="rounded-2xl border-gray-200/60 hover:shadow-lg transition-shadow">
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
                         {interview.title}
-                        <Badge variant="outline">{interview.level}</Badge>
+                        <div className="flex gap-2">
+                          <Badge variant="outline">{interview.level}</Badge>
+                          {(() => {
+                            const attemptedSession = sessions.find(s => s.interview.id === interview.id);
+                            const isAttempted = attemptedSession && attemptedSession.status === 'completed';
+                            return isAttempted ? (
+                              <Badge variant="secondary">Completed</Badge>
+                            ) : null;
+                          })()}
+                        </div>
                       </CardTitle>
                       <CardDescription>{interview.description}</CardDescription>
                     </CardHeader>
@@ -227,13 +246,22 @@ export default function Dashboard() {
                           {interview.duration} minutes
                         </div>
                       </div>
-                      <Button 
-                        onClick={() => startInterview(interview)}
-                        className="w-full"
-                      >
-                        <Play className="h-4 w-4 mr-2" />
-                        Start Interview
-                      </Button>
+                      {(() => {
+                        const attemptedSession = sessions.find(s => s.interview.id === interview.id);
+                        const isAttempted = attemptedSession && attemptedSession.status === 'completed';
+                        
+                        return (
+                          <Button 
+                            onClick={() => startInterview(interview)}
+                            className="w-full rounded-xl"
+                            disabled={isAttempted}
+                            variant={isAttempted ? "secondary" : "default"}
+                          >
+                            <Play className="h-4 w-4 mr-2" />
+                            {isAttempted ? 'Already Completed' : 'Start Interview'}
+                          </Button>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 ))}
@@ -246,7 +274,7 @@ export default function Dashboard() {
                 <h2 className="text-2xl font-bold mb-6">Recent Sessions</h2>
                 <div className="space-y-4">
                   {sessions.slice(0, 5).map((session) => (
-                    <Card key={session.id}>
+                    <Card key={session.id} className="rounded-2xl border-gray-200/60 hover:shadow-md transition-shadow">
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between">
                           <div>

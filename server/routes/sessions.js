@@ -4,7 +4,15 @@ const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+
+// Initialize Prisma client with error handling
+let prisma;
+try {
+  prisma = new PrismaClient();
+} catch (error) {
+  logger.error('Failed to initialize Prisma client in sessions routes:', error);
+  prisma = null;
+}
 
 // Validation schemas
 const createSessionSchema = Joi.object({
@@ -73,7 +81,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create new session
+// Create new session (or resume existing)
 router.post('/', async (req, res) => {
   try {
     const { error, value } = createSessionSchema.validate(req.body);
@@ -92,19 +100,25 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ error: 'Interview not found' });
     }
 
-    // Check if user already has an active session for this interview
+    // Check if user already has ANY session for this interview (one-time join policy)
     const existingSession = await prisma.session.findFirst({
       where: {
         userId: req.user.id,
-        interviewId,
-        status: { in: ['pending', 'in_progress'] }
+        interviewId
       }
     });
 
     if (existingSession) {
       return res.status(409).json({ 
-        error: 'Active session already exists for this interview',
-        sessionId: existingSession.id
+        error: 'Interview already attempted',
+        message: 'You have already participated in this interview. Each candidate can only join once.',
+        sessionId: existingSession.id,
+        existingSession: {
+          id: existingSession.id,
+          status: existingSession.status,
+          startedAt: existingSession.startedAt,
+          completedAt: existingSession.completedAt
+        }
       });
     }
 
@@ -213,6 +227,68 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     logger.error('Error deleting session:', error);
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// Start fresh session (complete existing one first)
+router.post('/fresh', async (req, res) => {
+  try {
+    const { error, value } = createSessionSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const { interviewId } = value;
+
+    // Verify interview exists
+    const interview = await prisma.interview.findUnique({
+      where: { id: interviewId }
+    });
+
+    if (!interview) {
+      return res.status(404).json({ error: 'Interview not found' });
+    }
+
+    // Complete any existing active sessions for this interview
+    if (prisma) {
+      try {
+        await prisma.session.updateMany({
+          where: {
+            userId: req.user.id,
+            interviewId,
+            status: { in: ['pending', 'in_progress'] }
+          },
+          data: {
+            status: 'completed',
+            completedAt: new Date()
+          }
+        });
+      } catch (dbError) {
+        logger.warn('Failed to complete existing sessions:', dbError.message);
+      }
+    }
+
+    // Create new session
+    const session = await prisma.session.create({
+      data: {
+        userId: req.user.id,
+        interviewId,
+        status: 'pending'
+      },
+      include: {
+        interview: true
+      }
+    });
+
+    logger.info(`New fresh session created: ${session.id} for user ${req.user.email}`);
+
+    res.status(201).json({
+      message: 'Fresh session created successfully',
+      session
+    });
+  } catch (error) {
+    logger.error('Error creating fresh session:', error);
+    res.status(500).json({ error: 'Failed to create fresh session' });
   }
 });
 
