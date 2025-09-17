@@ -25,6 +25,7 @@ import { api } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import SessionHistory from './SessionHistory'
 import Analytics from './Analytics'
+import JoinByCode from './JoinByCode'
 
 interface Question {
   id: string
@@ -61,6 +62,7 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
+  const [joinedInterviewId, setJoinedInterviewId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData()
@@ -151,11 +153,24 @@ export default function Dashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 rounded-xl bg-white/70 backdrop-blur p-1 shadow-sm">
+          <TabsList className="grid w-full grid-cols-4 rounded-xl bg-white/70 backdrop-blur p-1 shadow-sm">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="join">Join by Code</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
           </TabsList>
+          <TabsContent value="join">
+            {joinedInterviewId ? (
+              <div className="text-green-600 text-center mt-8">
+                Successfully joined! Redirecting to interview room...
+              </div>
+            ) : (
+              <JoinByCode onSuccess={(id) => {
+                setJoinedInterviewId(id);
+                setTimeout(() => router.push(`/interviewroom/${id}`), 1200);
+              }} />
+            )}
+          </TabsContent>
 
           <TabsContent value="overview" className="space-y-6">
             {/* Stats Cards */}

@@ -13,7 +13,10 @@ export default function CreateInterview() {
   const [duration, setDuration] = useState(30);
   const [description, setDescription] = useState("");
   const [questions, setQuestions] = useState<string[]>([""]);
-  const [rubric, setRubric] = useState("");
+  // Removed rubric input
+  const [password, setPassword] = useState("");
+  const [createdCode, setCreatedCode] = useState("");
+  const [createdPassword, setCreatedPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
@@ -37,10 +40,7 @@ export default function CreateInterview() {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.post("http://localhost:5000/api/generate-questions", {
-        role,
-        level,
-      });
+      const res = await api.post("/generate-questions", { role, level });
       if (res.data.questions && Array.isArray(res.data.questions)) {
         setQuestions(res.data.questions);
       } else {
@@ -65,25 +65,23 @@ export default function CreateInterview() {
       if (filteredQuestions.length === 0) {
         throw new Error("At least one question is required");
       }
-
-      let rubricObj;
-      try {
-        rubricObj = JSON.parse(rubric);
-      } catch {
-        throw new Error("Rubric must be valid JSON");
+      if (!password || password.length < 4) {
+        throw new Error("Password must be at least 4 characters");
       }
 
-      await api.post("/interviews", {
+      const res = await api.post("/interviews", {
         title,
         role,
         level,
         duration,
         description,
         questions: filteredQuestions,
-        rubric: rubricObj,
+        password,
       });
 
       setSuccess(true);
+      setCreatedCode(res.data.interview.code);
+      setCreatedPassword(password);
 
       // Reset form
       setTitle("");
@@ -92,7 +90,7 @@ export default function CreateInterview() {
       setDuration(30);
       setDescription("");
       setQuestions([""]);
-      setRubric("");
+      setPassword("");
     } catch (err: any) {
       if (err.response?.data?.error) setError(err.response.data.error);
       else if (err instanceof Error) setError(err.message);
@@ -163,6 +161,18 @@ export default function CreateInterview() {
                 placeholder="Description"
               />
 
+              {/* Password Section */}
+              <input
+                className="border rounded px-3 py-2"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Set Interview Password (min 4 chars)"
+                minLength={4}
+                maxLength={32}
+                required
+              />
+
               {/* Questions Section */}
               <div>
                 <label className="block text-sm font-medium mb-2">Questions</label>
@@ -202,25 +212,24 @@ export default function CreateInterview() {
                 </div>
               </div>
 
-              {/* Rubric Section */}
-              <div>
-                <label className="block text-sm font-medium mb-2">Rubric (JSON)</label>
-                <textarea
-                  className="border rounded px-3 py-2 w-full"
-                  value={rubric}
-                  onChange={(e) => setRubric(e.target.value)}
-                  placeholder='{"criteria": "Description of scoring criteria"}'
-                  rows={4}
-                  required
-                />
-              </div>
+              
 
               <Button type="submit" disabled={loading}>
                 {loading ? "Creating..." : "Create Interview"}
               </Button>
             </form>
 
-            {success && <p className="text-green-600 mt-2">Interview created successfully!</p>}
+            {success && (
+              <div className="text-green-600 mt-2">
+                <p>Interview created successfully!</p>
+                {createdCode && (
+                  <div className="mt-2 p-2 border rounded bg-green-50">
+                    <div><b>Code:</b> <span className="font-mono">{createdCode}</span></div>
+                    <div><b>Password:</b> <span className="font-mono">{createdPassword}</span></div>
+                  </div>
+                )}
+              </div>
+            )}
             {error && <p className="text-red-600 mt-2">{error}</p>}
           </CardContent>
         </Card>

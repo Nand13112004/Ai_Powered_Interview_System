@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const Joi = require('joi');
 const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
+const { sendVerificationEmail } = require('../utils/mailer');
 
 const router = express.Router();
 
@@ -39,6 +40,10 @@ router.post('/register', async (req, res) => {
 
     const { email, password, name, role } = value;
 
+    // Generate verification code and expiry (10 min)
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpires = new Date(Date.now() + 10 * 60 * 1000);
+
     let user;
     if (prisma) {
       try {
@@ -54,24 +59,30 @@ router.post('/register', async (req, res) => {
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 12);
 
-        // Create user
+        // Create user with verification fields
         user = await prisma.user.create({
           data: {
             email,
             password: hashedPassword,
             name,
-            role
+            role,
+            isVerified: false,
+            verificationCode,
+            verificationExpires
           },
           select: {
             id: true,
             email: true,
             name: true,
             role: true,
-            createdAt: true
+            createdAt: true,
+            isVerified: true
           }
         });
 
         logger.info(`New user registered: ${email}`);
+        // Send verification email
+        await sendVerificationEmail(email, verificationCode);
       } catch (dbError) {
         logger.warn('Database not available for registration, using fallback:', dbError.message);
         // Fallback: create mock user
@@ -80,7 +91,8 @@ router.post('/register', async (req, res) => {
           email,
           name,
           role,
-          createdAt: new Date()
+          createdAt: new Date(),
+          isVerified: false
         };
       }
     } else {
@@ -90,21 +102,14 @@ router.post('/register', async (req, res) => {
         email,
         name,
         role,
-        createdAt: new Date()
+        createdAt: new Date(),
+        isVerified: false
       };
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'my_super_secret',
-      { expiresIn: '7d' }
-    );
-
     res.status(201).json({
-      message: 'User registered successfully',
-      user,
-      token
+      message: 'User registered successfully. Please check your email for the verification code.',
+      user
     });
   } catch (error) {
     logger.error('Registration error:', error);
@@ -239,6 +244,44 @@ router.get('/me', async (req, res) => {
   } catch (error) {
     logger.error('Profile fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+// Email verification route
+router.post('/verify-email', async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: 'Email and code are required' });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (user.isVerified) {
+      return res.status(400).json({ error: 'User already verified' });
+    }
+    if (!user.verificationCode || !user.verificationExpires) {
+      return res.status(400).json({ error: 'No verification code found' });
+    }
+    if (user.verificationCode !== code) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+    if (new Date() > user.verificationExpires) {
+      return res.status(400).json({ error: 'Verification code expired' });
+    }
+    await prisma.user.update({
+      where: { email },
+      data: {
+        isVerified: true,
+        verificationCode: null,
+        verificationExpires: null
+      }
+    });
+    res.json({ message: 'Email verified successfully' });
+  } catch (error) {
+    logger.error('Email verification error:', error);
+    res.status(500).json({ error: 'Verification failed' });
   }
 });
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +23,10 @@ export default function LandingPage() {
     role: 'candidate' 
   })
   const [loading, setLoading] = useState(false)
+  const [showVerify, setShowVerify] = useState(false)
+  const [verifyEmail, setVerifyEmail] = useState('')
+  const [verifyCode, setVerifyCode] = useState('')
+  const [verifyLoading, setVerifyLoading] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -38,26 +43,67 @@ export default function LandingPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    
     if (registerData.password !== registerData.confirmPassword) {
       toast.error('Passwords do not match')
       return
     }
-
     setLoading(true)
     try {
-      await register(registerData.name, registerData.email, registerData.password, registerData.role)
-      toast.success('Registration successful!')
+      await api.post('/auth/register', {
+        name: registerData.name,
+        email: registerData.email,
+        password: registerData.password,
+        role: registerData.role
+      })
+      setShowVerify(true)
+      setVerifyEmail(registerData.email)
+      toast.success('Registration successful! Check your email for the verification code.')
     } catch (error: any) {
-      toast.error(error.message)
+      toast.error(error.response?.data?.error || error.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setVerifyLoading(true)
+    try {
+      await api.post('/auth/verify-email', { email: verifyEmail, code: verifyCode })
+      toast.success('Email verified! You can now log in.')
+      setShowVerify(false)
+      setVerifyEmail('')
+      setVerifyCode('')
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || error.message)
+    } finally {
+      setVerifyLoading(false)
     }
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       {/* Header */}
+      {showVerify && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-8 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4">Verify Your Email</h2>
+            <form onSubmit={handleVerify} className="space-y-4">
+              <div>
+                <Label htmlFor="verify-email">Email</Label>
+                <Input id="verify-email" value={verifyEmail} disabled className="mt-1" />
+              </div>
+              <div>
+                <Label htmlFor="verify-code">Verification Code</Label>
+                <Input id="verify-code" value={verifyCode} onChange={e => setVerifyCode(e.target.value)} required className="mt-1" />
+              </div>
+              <Button type="submit" disabled={verifyLoading} className="w-full">
+                {verifyLoading ? 'Verifying...' : 'Verify Email'}
+              </Button>
+            </form>
+          </div>
+        </div>
+      )}
       <header className="container mx-auto px-4 py-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">

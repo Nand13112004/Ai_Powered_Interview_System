@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -17,11 +17,13 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
-  Brain
+  Brain,
+  HelpCircle
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
+import dynamic from 'next/dynamic'
 
 interface Question {
   id: string
@@ -789,36 +791,45 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Column - Question and Chat */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Current Question Card */}
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-8">
-              <div className="flex items-start justify-between mb-6">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center">
-                    <span className="text-white font-bold text-lg">{currentQuestionIndex + 1}</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Question {currentQuestionIndex + 1}</h3>
-                    <p className="text-sm text-gray-500">of {interview.questions?.length || 0}</p>
+            {/* Question Box styled like the image */}
+            <div className="relative">
+              <div className="relative rounded-3xl border-2 border-red-500 bg-white p-6 pt-8 shadow-sm">
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-white">
+                  <div className="w-10 h-10 rounded-full border-2 border-red-500 flex items-center justify-center text-red-600 bg-white">
+                    <HelpCircle className="h-6 w-6" />
                   </div>
                 </div>
-                <Button
-                  onClick={goToNextQuestion}
-                  disabled={!interview.questions ? true : (!isCurrentAnswered && !typedResponse.trim())}
-                  className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
-                </Button>
-              </div>
-              <div className="prose prose-lg max-w-none">
-                <p className="text-gray-800 leading-relaxed">
-                  {currentQuestion || 'Waiting for questions...'}
-                </p>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 mb-1">Question {currentQuestionIndex + 1} of {interview.questions?.length || 0}</h3>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {currentQuestion || 'Waiting for questions...'}
+                    </p>
+                  </div>
+                  <Button
+                    onClick={goToNextQuestion}
+                    disabled={!interview.questions ? true : (!isCurrentAnswered && !typedResponse.trim())}
+                    className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
+                  >
+                    {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
+                  </Button>
+                </div>
               </div>
             </div>
 
             {/* Messages Area */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Conversation</h3>
+              <div className="mb-4 flex items-center justify-center">
+                <div className="w-full max-w-md">
+                  <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
+                    <div className="text-gray-500 text-center">
+                      <div className="text-4xl mb-2">🤖</div>
+                      <div className="text-sm">AI Interview Assistant</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Conversation</h3>
               <div className="space-y-4 max-h-96 overflow-y-auto">
                 {messages.map((message, index) => (
                   <div
@@ -842,6 +853,15 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
           {/* Right Column - Controls */}
           <div className="space-y-6">
+            {/* Robot watcher */}
+            <div>
+              <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
+                <div className="text-gray-500 text-center">
+                  <div className="text-4xl mb-2">🤖</div>
+                  <div className="text-sm">AI Interview Assistant</div>
+                </div>
+              </div>
+            </div>
             {/* Audio Controls */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Audio Controls</h3>

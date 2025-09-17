@@ -22,7 +22,7 @@ const createInterviewSchema = Joi.object({
   level: Joi.string().valid("junior", "mid", "senior").required(),
   duration: Joi.number().min(15).max(120).required(),
   questions: Joi.array().items(Joi.string()).min(1).required(),
-  rubric: Joi.object().required(),
+  password: Joi.string().min(4).max(32).required() // interviewer sets password
 });
 
 // ✅ Get all interviews
@@ -119,13 +119,31 @@ router.post("/", async (req, res) => {
         .json({ error: "Admin or interviewer access required" });
     }
 
+
     const { error, value } = createInterviewSchema.validate(req.body);
     if (error) {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { title, description, role, level, duration, questions, rubric } =
-      value;
+    const { title, description, role, level, duration, questions, password } = value;
+
+    // Generate random code: A-Z, a-z, 0-9, length 8
+    function generateRandomCode(length = 8) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let code = '';
+      for (let i = 0; i < length; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return code;
+    }
+    let code;
+    let isUnique = false;
+    // Ensure code is unique
+    while (!isUnique) {
+      code = generateRandomCode();
+      const existing = await prisma.interview.findUnique({ where: { code } });
+      if (!existing) isUnique = true;
+    }
 
     // ✅ Create interview and related questions
     const interview = await prisma.interview.create({
@@ -135,8 +153,10 @@ router.post("/", async (req, res) => {
         role,
         level,
         duration,
-        rubric,
+        rubric: {},
         userId: req.user.id,
+        code,
+        password,
         questions: {
           create: questions.map((q, i) => ({
             text: q,
@@ -178,7 +198,7 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { title, description, role, level, duration, questions, rubric } =
+    const { title, description, role, level, duration, questions } =
       value;
 
     // Update interview base fields
@@ -190,7 +210,6 @@ router.put("/:id", async (req, res) => {
         role,
         level,
         duration,
-        rubric,
       },
     });
 
@@ -242,6 +261,36 @@ router.delete("/:id", async (req, res) => {
   } catch (error) {
     logger.error("Error deleting interview:", error);
     res.status(500).json({ error: "Failed to delete interview" });
+  }
+});
+
+// ✅ Candidate join by code and password
+router.post("/join-by-code", async (req, res) => {
+  try {
+    const { code, password } = req.body;
+    if (!code || !password) {
+      return res.status(400).json({ error: "Code and password are required" });
+    }
+
+    // Find interview by code
+    const interview = await prisma.interview.findUnique({ where: { code } });
+    if (!interview) {
+      return res.status(404).json({ error: "Invalid code" });
+    }
+    if (interview.password !== password) {
+      return res.status(401).json({ error: "Invalid password" });
+    }
+    if (!interview.isActive) {
+      return res.status(403).json({ error: "Interview is not active" });
+    }
+
+    // Optionally, create a session for the candidate here
+    // const session = await prisma.session.create({ ... })
+
+    res.json({ message: "Joined interview successfully", interviewId: interview.id });
+  } catch (error) {
+    logger.error("Error joining interview by code:", error);
+    res.status(500).json({ error: "Failed to join interview" });
   }
 });
 
