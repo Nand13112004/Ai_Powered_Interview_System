@@ -1,5 +1,7 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
 import axios from "axios";
 import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +10,7 @@ import { Brain, Plus, X } from "lucide-react";
 
 export default function CreateInterview() {
   const [title, setTitle] = useState("");
+  const { logout } = useAuth();
   const [role, setRole] = useState("");
   const [level, setLevel] = useState("");
   const [duration, setDuration] = useState(30);
@@ -103,10 +106,21 @@ export default function CreateInterview() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm border-b">
-        <div className="container mx-auto px-4 py-4">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <Brain className="h-8 w-8 text-blue-600" />
             <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Link href="/interviewer/dashboard">
+              <button className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium border border-gray-200">Dashboard</button>
+            </Link>
+            <button
+              className="px-4 py-2 rounded bg-red-500 hover:bg-red-600 text-white font-medium"
+              onClick={logout}
+            >
+              Logout
+            </button>
           </div>
         </div>
       </header>

@@ -122,17 +122,17 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     const enterFullscreen = async () => {
       try {
         if (STRICT_MODE && document.documentElement.requestFullscreen) {
-          await document.documentElement.requestFullscreen()
+          await document.documentElement.requestFullscreen();
         }
       } catch (_) {}
     }
 
     const boot = async () => {
-      await ensurePermissions()
-      await enterFullscreen()
-      initializeSocket()
-      startSession()
-      startTimer()
+      await ensurePermissions();
+      await enterFullscreen();
+      initializeSocket();
+      startSession();
+      startTimer();
     }
 
     boot()
@@ -153,20 +153,34 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
     // Strict mode: fullscreen exit listener
     const onFullscreenChange = () => {
-      const inFs = !!document.fullscreenElement
-      if (!inFs && STRICT_MODE) {
-        reportIncident('fullscreen_exit')
-        toast.error('Fullscreen is required. Ending interview.')
-        completeInterview()
+      const inFs = !!document.fullscreenElement;
+      if (!inFs && STRICT_MODE && !isCompleted) {
+        reportIncident('fullscreen_exit');
+        toast.error('You must stay in fullscreen for the interview. Ending interview.');
+        completeInterview();
       }
-    }
-    document.addEventListener('fullscreenchange', onFullscreenChange)
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
 
     return () => {
-      cleanup()
-      window.removeEventListener('beforeunload', handleBeforeUnload)
-      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      cleanup();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
     }
+  // Prevent exiting fullscreen until interview is complete
+  useEffect(() => {
+    if (!isCompleted && STRICT_MODE) {
+      const preventKey = (e: KeyboardEvent) => {
+        // Prevent ESC key
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      };
+      window.addEventListener('keydown', preventKey, true);
+      return () => window.removeEventListener('keydown', preventKey, true);
+    }
+  }, [isCompleted]);
   }, [])
 
   // Proctoring: report helper
