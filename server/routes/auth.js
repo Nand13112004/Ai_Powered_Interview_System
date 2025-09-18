@@ -2,20 +2,13 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
-const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
 const { sendVerificationEmail } = require('../utils/mailer');
+const User = require('../models/User');
 
 const router = express.Router();
 
-// Initialize Prisma client with error handling
-let prisma;
-try {
-  prisma = new PrismaClient();
-} catch (error) {
-  logger.error('Failed to initialize Prisma client in auth routes:', error);
-  prisma = null;
-}
+// Using Mongoose models, no Prisma
 
 // Validation schemas
 const registerSchema = Joi.object({
@@ -44,68 +37,37 @@ router.post('/register', async (req, res) => {
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-    let user;
-    if (prisma) {
-      try {
-        // Check if user already exists
-        const existingUser = await prisma.user.findUnique({
-          where: { email }
-        });
-
-        if (existingUser) {
-          return res.status(409).json({ error: 'User already exists' });
-        }
-
-        // Hash password
-        const hashedPassword = await bcrypt.hash(password, 12);
-
-        // Create user with verification fields
-        user = await prisma.user.create({
-          data: {
-            email,
-            password: hashedPassword,
-            name,
-            role,
-            isVerified: false,
-            verificationCode,
-            verificationExpires
-          },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            createdAt: true,
-            isVerified: true
-          }
-        });
-
-        logger.info(`New user registered: ${email}`);
-        // Send verification email
-        await sendVerificationEmail(email, verificationCode);
-      } catch (dbError) {
-        logger.warn('Database not available for registration, using fallback:', dbError.message);
-        // Fallback: create mock user
-        user = {
-          id: 'mock-user-' + Date.now(),
-          email,
-          name,
-          role,
-          createdAt: new Date(),
-          isVerified: false
-        };
-      }
-    } else {
-      // Fallback: create mock user
-      user = {
-        id: 'mock-user-' + Date.now(),
-        email,
-        name,
-        role,
-        createdAt: new Date(),
-        isVerified: false
-      };
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ error: 'User already exists' });
     }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Create user with verification fields
+    const created = await User.create({
+      email,
+      password: hashedPassword,
+      name,
+      role,
+      isVerified: false,
+      verificationCode,
+      verificationExpires
+    });
+
+    const user = {
+      id: created._id.toString(),
+      email: created.email,
+      name: created.name,
+      role: created.role,
+      createdAt: created.createdAt,
+      isVerified: created.isVerified
+    };
+
+    logger.info(`New user registered: ${email}`);
+    await sendVerificationEmail(email, verificationCode);
 
     res.status(201).json({
       message: 'User registered successfully. Please check your email for the verification code.',
@@ -127,44 +89,16 @@ router.post('/login', async (req, res) => {
 
     const { email, password } = value;
 
-    let user;
-    if (prisma) {
-      try {
-        // Find user
-        user = await prisma.user.findUnique({
-          where: { email }
-        });
-
-        if (!user) {
-          return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Verify password
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-          return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        logger.info(`User logged in: ${email}`);
-      } catch (dbError) {
-        logger.warn('Database not available for login, using fallback:', dbError.message);
-        // Fallback: create mock user for testing
-        user = {
-          id: 'mock-user-' + Date.now(),
-          email,
-          name: 'Test User',
-          role: 'candidate'
-        };
-      }
-    } else {
-      // Fallback: create mock user for testing
-      user = {
-        id: 'mock-user-' + Date.now(),
-        email,
-        name: 'Test User',
-        role: 'candidate'
-      };
+    const userDoc = await User.findOne({ email });
+    if (!userDoc) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
+    const isValidPassword = await bcrypt.compare(password, userDoc.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const user = { id: userDoc._id.toString(), email: userDoc.email, name: userDoc.name, role: userDoc.role };
+    logger.info(`User logged in: ${email}`);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -201,40 +135,8 @@ router.get('/me', async (req, res) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
     
-    let user;
-    if (prisma) {
-      try {
-        user = await prisma.user.findUnique({
-          where: { id: decoded.userId },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            createdAt: true
-          }
-        });
-      } catch (dbError) {
-        logger.warn('Database not available for profile fetch, using fallback:', dbError.message);
-        // Fallback: use token data
-        user = {
-          id: decoded.userId,
-          email: decoded.email || 'test@example.com',
-          name: 'Test User',
-          role: decoded.role || 'candidate',
-          createdAt: new Date()
-        };
-      }
-    } else {
-      // Fallback: use token data
-      user = {
-        id: decoded.userId,
-        email: decoded.email || 'test@example.com',
-        name: 'Test User',
-        role: decoded.role || 'candidate',
-        createdAt: new Date()
-      };
-    }
+    const userDoc = await User.findById(decoded.userId).select('email name role createdAt');
+    const user = userDoc ? { id: userDoc._id.toString(), email: userDoc.email, name: userDoc.name, role: userDoc.role, createdAt: userDoc.createdAt } : null;
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -254,7 +156,7 @@ router.post('/verify-email', async (req, res) => {
     return res.status(400).json({ error: 'Email and code are required' });
   }
   try {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -270,14 +172,10 @@ router.post('/verify-email', async (req, res) => {
     if (new Date() > user.verificationExpires) {
       return res.status(400).json({ error: 'Verification code expired' });
     }
-    await prisma.user.update({
-      where: { email },
-      data: {
-        isVerified: true,
-        verificationCode: null,
-        verificationExpires: null
-      }
-    });
+    user.isVerified = true;
+    user.verificationCode = null;
+    user.verificationExpires = null;
+    await user.save();
     res.json({ message: 'Email verified successfully' });
   } catch (error) {
     logger.error('Email verification error:', error);

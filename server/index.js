@@ -13,15 +13,20 @@ const generateQuestionsRoute = require('./routes/generateQuestions');
 const { authenticateToken } = require('./middleware/auth');
 const { setupSocketHandlers } = require('./socket/handlers');
 const { logger } = require('./utils/logger');
+const connectMongo = require('./utils/mongo');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: process.env.CLIENT_URL || "http://localhost:3000",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
+
+// Connect to MongoDB
+connectMongo();
 
 // Security middleware
 app.use(helmet());

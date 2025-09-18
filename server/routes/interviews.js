@@ -1,18 +1,13 @@
 const express = require("express");
 const Joi = require("joi");
-const { PrismaClient } = require("@prisma/client");
 const { logger } = require("../utils/logger");
+const Interview = require('../models/Interview');
+const Question = require('../models/Question');
+const Response = require('../models/Response');
 
 const router = express.Router();
 
-// Initialize Prisma client with error handling
-let prisma;
-try {
-  prisma = new PrismaClient();
-} catch (error) {
-  logger.error('Failed to initialize Prisma client in interviews routes:', error);
-  prisma = null;
-}
+// Using Mongoose models, no Prisma
 
 // Validation schema
 const createInterviewSchema = Joi.object({
@@ -35,21 +30,22 @@ router.get("/", async (req, res) => {
       whereClause.userId = req.user.id;
     }
 
-    const interviews = await prisma.interview.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        role: true,
-        level: true,
-        duration: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const interviews = await Interview.find(whereClause)
+      .select('title description role level duration createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json({ interviews });
+    const mapped = interviews.map(d => ({
+      id: d._id.toString(),
+      title: d.title,
+      description: d.description,
+      role: d.role,
+      level: d.level,
+      duration: d.duration,
+      createdAt: d.createdAt,
+    }));
+
+    res.json({ interviews: mapped });
   } catch (error) {
     logger.error("Error fetching interviews:", error);
     res.status(500).json({ error: "Failed to fetch interviews" });
@@ -61,18 +57,29 @@ router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const interview = await prisma.interview.findUnique({
-      where: { id },
-      include: {
-        questions: {
-          orderBy: { number: "asc" },
-        },
-      },
-    });
-
-    if (!interview) {
+    const interviewDoc = await Interview.findById(id).lean();
+    if (!interviewDoc) {
       return res.status(404).json({ error: "Interview not found" });
     }
+    const questions = await Question.find({ interviewId: id, isActive: true }).sort({ number: 1 }).lean();
+    const interview = {
+      id: interviewDoc._id.toString(),
+      title: interviewDoc.title,
+      description: interviewDoc.description,
+      role: interviewDoc.role,
+      level: interviewDoc.level,
+      duration: interviewDoc.duration,
+      rubric: interviewDoc.rubric || {},
+      createdAt: interviewDoc.createdAt,
+      questions: questions.map(q => ({
+        id: q._id.toString(),
+        text: q.text,
+        type: q.type,
+        category: q.category,
+        difficulty: q.difficulty,
+        number: q.number
+      }))
+    };
 
     res.json({ interview });
   } catch (error) {
@@ -90,18 +97,16 @@ router.get('/:id/responses', async (req, res) => {
 
     const { id } = req.params;
 
-    const responsesRaw = await prisma.response.findMany({
-      where: { interviewId: id },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        question: { select: { id: true, text: true, number: true } },
-        session: { select: { id: true } }
-      }
-    });
+    const responsesRaw = await Response.find({ interviewId: id }).sort({ createdAt: 1 }).lean();
     const responses = responsesRaw.map(r => ({
-      ...r,
-      audioData: r.audioData ? Buffer.from(r.audioData).toString('base64') : null
+      id: r._id.toString(),
+      userId: r.userId,
+      interviewId: r.interviewId,
+      sessionId: r.sessionId,
+      questionId: r.questionId,
+      text: r.text,
+      audioData: r.audioData ? Buffer.from(r.audioData).toString('base64') : null,
+      createdAt: r.createdAt,
     }));
     res.json({ responses });
   } catch (error) {
@@ -138,37 +143,51 @@ router.post("/", async (req, res) => {
     }
     let code;
     let isUnique = false;
-    // Ensure code is unique
     while (!isUnique) {
       code = generateRandomCode();
-      const existing = await prisma.interview.findUnique({ where: { code } });
+      const existing = await Interview.findOne({ code }).lean();
       if (!existing) isUnique = true;
     }
 
-    // ✅ Create interview and related questions
-    const interview = await prisma.interview.create({
-      data: {
-        title,
-        description,
-        role,
-        level,
-        duration,
-        rubric: {},
-        userId: req.user.id,
-        code,
-        password,
-        questions: {
-          create: questions.map((q, i) => ({
-            text: q,
-            type: "technical", // default
-            category: "general",
-            difficulty: level,
-            number: i + 1, // keep order
-          })),
-        },
-      },
-      include: { questions: true },
+    const createdInterview = await Interview.create({
+      title,
+      description,
+      role,
+      level,
+      duration,
+      rubric: {},
+      userId: req.user.id,
+      code,
+      password,
     });
+    const questionDocs = await Question.insertMany(questions.map((q, i) => ({
+      text: q,
+      type: 'technical',
+      category: 'general',
+      difficulty: level,
+      number: i + 1,
+      interviewId: createdInterview._id.toString(),
+    })));
+    const interview = {
+      id: createdInterview._id.toString(),
+      title: createdInterview.title,
+      description: createdInterview.description,
+      role: createdInterview.role,
+      level: createdInterview.level,
+      duration: createdInterview.duration,
+      rubric: createdInterview.rubric,
+      code: createdInterview.code,
+      password: createdInterview.password,
+      createdAt: createdInterview.createdAt,
+      questions: questionDocs.map(q => ({
+        id: q._id.toString(),
+        text: q.text,
+        type: q.type,
+        category: q.category,
+        difficulty: q.difficulty,
+        number: q.number,
+      })),
+    };
 
     logger.info(`New interview created: ${title} by ${req.user.email}`);
 
@@ -201,33 +220,17 @@ router.put("/:id", async (req, res) => {
     const { title, description, role, level, duration, questions } =
       value;
 
-    // Update interview base fields
-    await prisma.interview.update({
-      where: { id },
-      data: {
-        title,
-        description,
-        role,
-        level,
-        duration,
-      },
-    });
+    await Interview.findByIdAndUpdate(id, { title, description, role, level, duration });
 
-    // Replace existing questions with new ones
-    await prisma.question.deleteMany({
-      where: { interviewId: id },
-    });
-
-    await prisma.question.createMany({
-      data: questions.map((q, i) => ({
-        text: q,
-        type: "technical",
-        category: "general",
-        difficulty: level,
-        number: i + 1,
-        interviewId: id,
-      })),
-    });
+    await Question.deleteMany({ interviewId: id });
+    await Question.insertMany(questions.map((q, i) => ({
+      text: q,
+      type: 'technical',
+      category: 'general',
+      difficulty: level,
+      number: i + 1,
+      interviewId: id,
+    })));
 
     logger.info(`Interview updated: ${id} by ${req.user.email}`);
 
@@ -250,10 +253,7 @@ router.delete("/:id", async (req, res) => {
 
     const { id } = req.params;
 
-    await prisma.interview.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    await Interview.findByIdAndUpdate(id, { isActive: false });
 
     logger.info(`Interview deactivated: ${id} by ${req.user.email}`);
 
@@ -273,7 +273,7 @@ router.post("/join-by-code", async (req, res) => {
     }
 
     // Find interview by code
-    const interview = await prisma.interview.findUnique({ where: { code } });
+    const interview = await Interview.findOne({ code }).lean();
     if (!interview) {
       return res.status(404).json({ error: "Invalid code" });
     }
@@ -287,7 +287,7 @@ router.post("/join-by-code", async (req, res) => {
     // Optionally, create a session for the candidate here
     // const session = await prisma.session.create({ ... })
 
-    res.json({ message: "Joined interview successfully", interviewId: interview.id });
+    res.json({ message: "Joined interview successfully", interviewId: interview._id.toString() });
   } catch (error) {
     logger.error("Error joining interview by code:", error);
     res.status(500).json({ error: "Failed to join interview" });

@@ -1,16 +1,11 @@
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
 const { handleInterviewSession } = require('./interviewHandler');
+const User = require('../models/User');
+const Session = require('../models/Session');
+const ProctorEvent = require('../models/ProctorEvent');
 
-// Initialize Prisma client with error handling
-let prisma;
-try {
-  prisma = new PrismaClient();
-} catch (error) {
-  logger.error('Failed to initialize Prisma client:', error);
-  prisma = null;
-}
+// Using Mongoose models, no Prisma
 
 const setupSocketHandlers = (io) => {
   // Authentication middleware for socket connections
@@ -24,31 +19,12 @@ const setupSocketHandlers = (io) => {
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'my_super_secret');
       
-      // Verify user exists if database is available
-      if (prisma) {
-        try {
-          const user = await prisma.user.findUnique({
-            where: { id: decoded.userId },
-            select: { id: true, email: true, name: true, role: true }
-          });
-
-          if (!user) {
-            return next(new Error('Authentication error: User not found'));
-          }
-
-          socket.userId = user.id;
-          socket.user = user;
-        } catch (dbError) {
-          logger.warn('Database not available for auth, using fallback:', dbError.message);
-          // Fallback: use token data directly
-          socket.userId = decoded.userId;
-          socket.user = { id: decoded.userId, email: decoded.email || 'test@example.com', name: 'Test User', role: 'candidate' };
-        }
-      } else {
-        // Fallback: use token data directly
-        socket.userId = decoded.userId;
-        socket.user = { id: decoded.userId, email: decoded.email || 'test@example.com', name: 'Test User', role: 'candidate' };
+      const userDoc = await User.findById(decoded.userId).select('email name role');
+      if (!userDoc) {
+        return next(new Error('Authentication error: User not found'));
       }
+      socket.userId = userDoc._id.toString();
+      socket.user = { id: userDoc._id.toString(), email: userDoc.email, name: userDoc.name, role: userDoc.role };
       
       next();
     } catch (error) {
@@ -69,22 +45,7 @@ const setupSocketHandlers = (io) => {
         const { sessionId } = data;
         
         // Try to verify session belongs to user if database is available
-        let session = null;
-        if (prisma) {
-          try {
-            session = await prisma.session.findFirst({
-              where: {
-                id: sessionId,
-                userId: socket.userId
-              },
-              include: {
-                interview: true
-              }
-            });
-          } catch (dbError) {
-            logger.warn('Database not available for session lookup:', dbError.message);
-          }
-        }
+        let session = await Session.findOne({ _id: sessionId, userId: socket.userId }).lean();
 
         if (!session) {
           // Create mock session for testing
@@ -112,18 +73,8 @@ const setupSocketHandlers = (io) => {
         socket.join(`interview_${sessionId}`);
         
         // Update session status if needed and database is available
-        if (prisma && session.status === 'pending') {
-          try {
-            await prisma.session.update({
-              where: { id: sessionId },
-              data: { 
-                status: 'in_progress',
-                startedAt: new Date()
-              }
-            });
-          } catch (dbError) {
-            logger.warn('Failed to update session status:', dbError.message);
-          }
+        if (session && session.status === 'pending') {
+          await Session.findByIdAndUpdate(sessionId, { status: 'in_progress', startedAt: new Date() });
         }
 
         socket.emit('interview_joined', {
@@ -187,48 +138,22 @@ const setupSocketHandlers = (io) => {
         const { sessionId, finalTranscript, reason } = data;
         
         // Update session status if database is available
-        let session = null;
-        if (prisma) {
+        let session = await Session.findOne({ _id: sessionId, userId: socket.userId });
+        if (session) {
+          const duration = session.startedAt ? Math.round((new Date() - session.startedAt) / 60000) : null;
+          session.status = 'completed';
+          session.completedAt = new Date();
+          session.transcript = finalTranscript;
+          session.duration = duration;
           try {
-            session = await prisma.session.findFirst({
-              where: {
-                id: sessionId,
-                userId: socket.userId
-              }
-            });
-
-            if (session) {
-              const completedSession = await prisma.session.update({
-                where: { id: sessionId },
-                data: {
-                  status: 'completed',
-                  completedAt: new Date(),
-                  transcript: finalTranscript,
-                  duration: session.startedAt ? 
-                    Math.round((new Date() - session.startedAt) / 60000) : null
-                }
-              });
-
-              // Generate AI feedback and scores
-              try {
-                const aiService = require('../services/aiService');
-                const feedback = await aiService.generateInterviewFeedback(finalTranscript, session.interviewId);
-                
-                // Update session with feedback
-                await prisma.session.update({
-                  where: { id: sessionId },
-                  data: {
-                    scores: feedback.scores,
-                    feedback: feedback
-                  }
-                });
-              } catch (aiError) {
-                logger.warn('Failed to generate AI feedback:', aiError.message);
-              }
-            }
-          } catch (dbError) {
-            logger.warn('Database not available for interview completion:', dbError.message);
+            const aiService = require('../services/aiService');
+            const feedback = await aiService.generateInterviewFeedback(finalTranscript, session.interviewId);
+            session.scores = feedback.scores;
+            session.feedback = feedback;
+          } catch (aiError) {
+            logger.warn('Failed to generate AI feedback:', aiError.message);
           }
+          await session.save();
         }
 
         socket.emit('interview_completed', {
@@ -250,18 +175,11 @@ const setupSocketHandlers = (io) => {
       try {
         const { sessionId, type, meta, at } = payload || {}
         logger.info(`Proctor event: ${type} for session ${sessionId} by ${socket.user?.email}`, { meta, at })
-        if (prisma && sessionId) {
+        if (sessionId) {
           try {
-            await prisma.proctorEvent?.create?.({
-              data: {
-                sessionId,
-                type,
-                metadata: meta ? JSON.stringify(meta) : '{}',
-                createdAt: at ? new Date(at) : new Date()
-              }
-            })
+            await ProctorEvent.create({ sessionId, type, metadata: meta ? JSON.stringify(meta) : '{}', createdAt: at ? new Date(at) : new Date() });
           } catch (dbErr) {
-            logger.warn('Proctor event DB save failed (table may not exist):', dbErr.message)
+            logger.warn('Proctor event DB save failed:', dbErr.message)
           }
         }
       } catch (err) {
@@ -295,37 +213,20 @@ const setupSocketHandlers = (io) => {
       logger.info(`User disconnected: ${socket.user.email} (${socket.id}) - ${reason}`);
       
       // Auto-complete any active interviews when user disconnects
-      if (prisma) {
-        try {
-          // Find active sessions for this user
-          const activeSessions = await prisma.session.findMany({
-            where: {
-              userId: socket.userId,
-              status: { in: ['pending', 'in_progress'] }
-            }
-          });
-
-          // Mark all active sessions as completed
-          for (const session of activeSessions) {
-            await prisma.session.update({
-              where: { id: session.id },
-              data: {
-                status: 'completed',
-                completedAt: new Date(),
-                duration: session.startedAt ? 
-                  Math.round((new Date() - session.startedAt) / 60000) : null
-              }
-            });
-            
-            logger.info(`Auto-completed session ${session.id} due to disconnect`);
-          }
-
-          if (activeSessions.length > 0) {
-            logger.info(`Auto-completed ${activeSessions.length} session(s) for ${socket.user.email} due to disconnect`);
-          }
-        } catch (error) {
-          logger.error('Error auto-completing sessions on disconnect:', error);
+      try {
+        const activeSessions = await Session.find({ userId: socket.userId, status: { $in: ['pending', 'in_progress'] } });
+        for (const s of activeSessions) {
+          s.status = 'completed';
+          s.completedAt = new Date();
+          s.duration = s.startedAt ? Math.round((new Date() - s.startedAt) / 60000) : null;
+          await s.save();
+          logger.info(`Auto-completed session ${s._id.toString()} due to disconnect`);
         }
+        if (activeSessions.length > 0) {
+          logger.info(`Auto-completed ${activeSessions.length} session(s) for ${socket.user.email} due to disconnect`);
+        }
+      } catch (error) {
+        logger.error('Error auto-completing sessions on disconnect:', error);
       }
     });
 

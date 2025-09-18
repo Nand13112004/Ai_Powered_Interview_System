@@ -1,15 +1,11 @@
-const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
 const aiService = require('../services/aiService');
+const Session = require('../models/Session');
+const Interview = require('../models/Interview');
+const Question = require('../models/Question');
+const Response = require('../models/Response');
 
-// Initialize Prisma client with error handling
-let prisma;
-try {
-  prisma = new PrismaClient();
-} catch (error) {
-  logger.error('Failed to initialize Prisma client:', error);
-  prisma = null;
-}
+// Using Mongoose models, no Prisma
 
 // Store active interview sessions in memory (in production, use Redis)
 const activeSessions = new Map();
@@ -20,31 +16,23 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
     let sessionState = activeSessions.get(sessionId);
     if (!sessionState) {
       // Try to get session from database if available
-      if (prisma) {
-        try {
-          const session = await prisma.session.findFirst({
-            where: { id: sessionId },
-            include: { 
-              interview: { 
-                include: { 
-                  questions: { orderBy: { number: 'asc' } } 
-                } 
-              } 
-            }
-          });
-          
-          if (session) {
-            sessionState = {
-              sessionId,
-              interview: session.interview,
-              transcript: [],
-              currentQuestionIndex: 0,
-              startTime: new Date(),
-              isActive: true
-            };
-          }
-        } catch (dbError) {
-          logger.warn('Database not available, using fallback session:', dbError.message);
+      const session = await Session.findById(sessionId).lean();
+      if (session) {
+        const interview = await Interview.findById(session.interviewId).lean();
+        const questions = await Question.find({ interviewId: session.interviewId }).sort({ number: 1 }).lean();
+        if (interview && questions.length > 0) {
+          sessionState = {
+            sessionId,
+            interview: {
+              id: interview._id.toString(),
+              title: interview.title,
+              questions: questions.map(q => ({ id: q._id.toString(), text: q.text, number: q.number }))
+            },
+            transcript: [],
+            currentQuestionIndex: 0,
+            startTime: new Date(),
+            isActive: true
+          };
         }
       }
       
@@ -84,17 +72,15 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
         const currentQuestion = questionId 
           ? sessionState.interview.questions.find(q => q.id === questionId)
           : sessionState.interview.questions[sessionState.currentQuestionIndex];
-        if (currentQuestion && prisma) {
+        if (currentQuestion) {
           try {
-            await prisma.response.create({
-              data: {
-                userId: socket.userId,
-                interviewId: sessionState.interview.id,
-                sessionId,
-                questionId: currentQuestion.id,
-                text: transcribedText || null,
-                audioData: audioBuffer
-              }
+            await Response.create({
+              userId: socket.userId,
+              interviewId: sessionState.interview.id,
+              sessionId,
+              questionId: currentQuestion.id,
+              text: transcribedText || null,
+              audioData: audioBuffer
             });
             logger.info(`Response saved to database for question ${currentQuestion.id}`);
           } catch (dbError) {
@@ -114,17 +100,9 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
       const currentQuestion = questionId 
         ? sessionState.interview.questions.find(q => q.id === questionId)
         : sessionState.interview.questions[sessionState.currentQuestionIndex];
-      if (currentQuestion && prisma) {
+      if (currentQuestion) {
         try {
-          await prisma.response.create({
-            data: {
-              userId: socket.userId,
-              interviewId: sessionState.interview.id,
-              sessionId,
-              questionId: currentQuestion.id,
-              text: transcribedText
-            }
-          });
+          await Response.create({ userId: socket.userId, interviewId: sessionState.interview.id, sessionId, questionId: currentQuestion.id, text: transcribedText });
           logger.info(`Text response saved to database for question ${currentQuestion.id}`);
         } catch (dbError) {
           logger.warn('Failed to save text response to database:', dbError.message);
@@ -179,19 +157,10 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
     }
 
     // Update session in database
-    if (prisma) {
-      try {
-        await prisma.session.update({
-          where: { id: sessionId },
-          data: {
-            transcript: sessionState.transcript
-          }
-        });
-      } catch (dbError) {
-        logger.warn('Failed to update session in database:', dbError.message);
-      }
-    } else {
-      logger.info(`Session transcript updated (mock mode): ${sessionState.transcript.length} messages`);
+    try {
+      await Session.findByIdAndUpdate(sessionId, { transcript: sessionState.transcript });
+    } catch (dbError) {
+      logger.warn('Failed to update session in database:', dbError.message);
     }
 
     // Advance to next question if provided question was answered

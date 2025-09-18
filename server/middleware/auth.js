@@ -1,8 +1,6 @@
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
-
-const prisma = new PrismaClient();
+const User = require('../models/User');
 
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -16,16 +14,13 @@ const authenticateToken = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // Verify user still exists
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: { id: true, email: true, name: true, role: true }
-    });
+    const userDoc = await User.findById(decoded.userId).select('email name role');
 
-    if (!user) {
+    if (!userDoc) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    req.user = user;
+    req.user = { id: userDoc._id.toString(), email: userDoc.email, name: userDoc.name, role: userDoc.role };
     next();
   } catch (error) {
     logger.error('Token verification failed:', error);

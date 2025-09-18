@@ -1,18 +1,12 @@
 const express = require('express');
 const Joi = require('joi');
-const { PrismaClient } = require('@prisma/client');
 const { logger } = require('../utils/logger');
+const Session = require('../models/Session');
+const Interview = require('../models/Interview');
 
 const router = express.Router();
 
-// Initialize Prisma client with error handling
-let prisma;
-try {
-  prisma = new PrismaClient();
-} catch (error) {
-  logger.error('Failed to initialize Prisma client in sessions routes:', error);
-  prisma = null;
-}
+// Using Mongoose models, no Prisma
 
 // Validation schemas
 const createSessionSchema = Joi.object({
@@ -31,22 +25,28 @@ const updateSessionSchema = Joi.object({
 // Get user's sessions
 router.get('/', async (req, res) => {
   try {
-    const sessions = await prisma.session.findMany({
-      where: { userId: req.user.id },
-      include: {
-        interview: {
-          select: {
-            id: true,
-            title: true,
-            role: true,
-            level: true,
-            duration: true,
-            questions: true
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const sessionsRaw = await Session.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean();
+    // For interview info, fetch in batch
+    const interviewIds = [...new Set(sessionsRaw.map(s => s.interviewId))];
+    const interviews = await Interview.find({ _id: { $in: interviewIds } }).lean();
+    const mapById = new Map(interviews.map(i => [i._id.toString(), i]));
+    const sessions = sessionsRaw.map(s => ({
+      id: s._id.toString(),
+      userId: s.userId,
+      interviewId: s.interviewId,
+      status: s.status,
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+      duration: s.duration,
+      createdAt: s.createdAt,
+      interview: mapById.get(s.interviewId) ? {
+        id: mapById.get(s.interviewId)._id.toString(),
+        title: mapById.get(s.interviewId).title,
+        role: mapById.get(s.interviewId).role,
+        level: mapById.get(s.interviewId).level,
+        duration: mapById.get(s.interviewId).duration,
+      } : null,
+    }));
 
     res.json({ sessions });
   } catch (error) {
@@ -60,15 +60,30 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const session = await prisma.session.findFirst({
-      where: { 
-        id,
-        userId: req.user.id // Ensure user can only access their own sessions
-      },
-      include: {
-        interview: true
-      }
-    });
+    const sessionDoc = await Session.findOne({ _id: id, userId: req.user.id }).lean();
+    if (!sessionDoc) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    const interview = await Interview.findById(sessionDoc.interviewId).lean();
+    const session = {
+      id: sessionDoc._id.toString(),
+      userId: sessionDoc.userId,
+      interviewId: sessionDoc.interviewId,
+      status: sessionDoc.status,
+      startedAt: sessionDoc.startedAt,
+      completedAt: sessionDoc.completedAt,
+      duration: sessionDoc.duration,
+      transcript: sessionDoc.transcript,
+      scores: sessionDoc.scores,
+      feedback: sessionDoc.feedback,
+      interview: interview ? {
+        id: interview._id.toString(),
+        title: interview.title,
+        role: interview.role,
+        level: interview.level,
+        duration: interview.duration,
+      } : null,
+    };
 
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
@@ -91,22 +106,14 @@ router.post('/', async (req, res) => {
 
     const { interviewId } = value;
 
-    // Verify interview exists
-    const interview = await prisma.interview.findUnique({
-      where: { id: interviewId }
-    });
+    const interview = await Interview.findById(interviewId).lean();
 
     if (!interview) {
       return res.status(404).json({ error: 'Interview not found' });
     }
 
     // Check if user already has ANY session for this interview (one-time join policy)
-    const existingSession = await prisma.session.findFirst({
-      where: {
-        userId: req.user.id,
-        interviewId
-      }
-    });
+    const existingSession = await Session.findOne({ userId: req.user.id, interviewId }).lean();
 
     if (existingSession) {
       return res.status(409).json({ 
@@ -122,16 +129,23 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const session = await prisma.session.create({
-      data: {
-        userId: req.user.id,
-        interviewId,
-        status: 'pending'
-      },
-      include: {
-        interview: true
+    const created = await Session.create({ userId: req.user.id, interviewId, status: 'pending' });
+    const session = {
+      id: created._id.toString(),
+      userId: created.userId,
+      interviewId: created.interviewId,
+      status: created.status,
+      startedAt: created.startedAt,
+      completedAt: created.completedAt,
+      duration: created.duration,
+      interview: {
+        id: interview._id.toString(),
+        title: interview.title,
+        role: interview.role,
+        level: interview.level,
+        duration: interview.duration,
       }
-    });
+    };
 
     logger.info(`New session created: ${session.id} for user ${req.user.email}`);
 
@@ -155,12 +169,7 @@ router.put('/:id', async (req, res) => {
     }
 
     // Verify session belongs to user
-    const existingSession = await prisma.session.findFirst({
-      where: { 
-        id,
-        userId: req.user.id
-      }
-    });
+    const existingSession = await Session.findOne({ _id: id, userId: req.user.id });
 
     if (!existingSession) {
       return res.status(404).json({ error: 'Session not found' });
@@ -180,13 +189,28 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    const session = await prisma.session.update({
-      where: { id },
-      data: updateData,
-      include: {
-        interview: true
-      }
-    });
+    await Session.findByIdAndUpdate(id, updateData);
+    const sessionDoc = await Session.findById(id).lean();
+    const interview = await Interview.findById(sessionDoc.interviewId).lean();
+    const session = {
+      id: sessionDoc._id.toString(),
+      userId: sessionDoc.userId,
+      interviewId: sessionDoc.interviewId,
+      status: sessionDoc.status,
+      startedAt: sessionDoc.startedAt,
+      completedAt: sessionDoc.completedAt,
+      duration: sessionDoc.duration,
+      transcript: sessionDoc.transcript,
+      scores: sessionDoc.scores,
+      feedback: sessionDoc.feedback,
+      interview: interview ? {
+        id: interview._id.toString(),
+        title: interview.title,
+        role: interview.role,
+        level: interview.level,
+        duration: interview.duration,
+      } : null,
+    };
 
     logger.info(`Session updated: ${id} by ${req.user.email}`);
 
@@ -206,20 +230,13 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
 
     // Verify session belongs to user
-    const session = await prisma.session.findFirst({
-      where: { 
-        id,
-        userId: req.user.id
-      }
-    });
+    const session = await Session.findOne({ _id: id, userId: req.user.id });
 
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    await prisma.session.delete({
-      where: { id }
-    });
+    await Session.findByIdAndDelete(id);
 
     logger.info(`Session deleted: ${id} by ${req.user.email}`);
 
@@ -241,44 +258,30 @@ router.post('/fresh', async (req, res) => {
     const { interviewId } = value;
 
     // Verify interview exists
-    const interview = await prisma.interview.findUnique({
-      where: { id: interviewId }
-    });
+    const interview = await Interview.findById(interviewId);
 
     if (!interview) {
       return res.status(404).json({ error: 'Interview not found' });
     }
 
     // Complete any existing active sessions for this interview
-    if (prisma) {
-      try {
-        await prisma.session.updateMany({
-          where: {
-            userId: req.user.id,
-            interviewId,
-            status: { in: ['pending', 'in_progress'] }
-          },
-          data: {
-            status: 'completed',
-            completedAt: new Date()
-          }
-        });
-      } catch (dbError) {
-        logger.warn('Failed to complete existing sessions:', dbError.message);
-      }
-    }
+    await Session.updateMany({ userId: req.user.id, interviewId, status: { $in: ['pending', 'in_progress'] } }, { status: 'completed', completedAt: new Date() });
 
     // Create new session
-    const session = await prisma.session.create({
-      data: {
-        userId: req.user.id,
-        interviewId,
-        status: 'pending'
-      },
-      include: {
-        interview: true
+    const created = await Session.create({ userId: req.user.id, interviewId, status: 'pending' });
+    const session = {
+      id: created._id.toString(),
+      userId: created.userId,
+      interviewId: created.interviewId,
+      status: created.status,
+      interview: {
+        id: interview._id.toString(),
+        title: interview.title,
+        role: interview.role,
+        level: interview.level,
+        duration: interview.duration,
       }
-    });
+    };
 
     logger.info(`New fresh session created: ${session.id} for user ${req.user.email}`);
 
