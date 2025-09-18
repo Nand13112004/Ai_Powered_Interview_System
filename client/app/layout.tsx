@@ -7,8 +7,8 @@ import { AuthProvider } from '@/contexts/AuthContext'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'AI Interview Platform',
-  description: 'AI-powered interview platform with real-time audio/video communication',
+  title: 'MockMate AI - AI-Powered Interviews',
+  description: 'MockMate AI - AI-powered interview platform with real-time audio/video communication',
 }
 
 export default function RootLayout({

@@ -76,7 +76,7 @@ export default function InterviewerDashboard() {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <ClipboardList className="h-8 w-8 text-blue-600" />
-              <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+              <h1 className="text-2xl font-bold text-gray-900">MockMate AI</h1>
             </div>
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">

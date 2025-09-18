@@ -838,7 +838,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                   <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
                     <div className="text-gray-500 text-center">
                       <div className="text-4xl mb-2">🤖</div>
-                      <div className="text-sm">AI Interview Assistant</div>
+                      <div className="text-sm">MockMate AI Assistant</div>
                     </div>
                   </div>
                 </div>
@@ -872,7 +872,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
                 <div className="text-gray-500 text-center">
                   <div className="text-4xl mb-2">🤖</div>
-                  <div className="text-sm">AI Interview Assistant</div>
+                  <div className="text-sm">MockMate AI Assistant</div>
                 </div>
               </div>
             </div>

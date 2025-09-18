@@ -108,7 +108,7 @@ export default function LandingPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Brain className="h-8 w-8 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+            <h1 className="text-2xl font-bold text-gray-900">MockMate AI</h1>
           </div>
           <div className="flex items-center space-x-4">
             <span className="text-sm text-gray-600">Powered by AI</span>
@@ -122,11 +122,11 @@ export default function LandingPage() {
           <h2 className="text-5xl font-bold text-gray-900 mb-6">
             Master Your Next Interview with
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
-              {' '}AI-Powered Practice
+              {' '}MockMate AI
             </span>
           </h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto mb-8">
-            Experience realistic interview scenarios with our AI interviewer. Get instant feedback, 
+            Experience realistic interview scenarios with MockMate AI. Get instant feedback, 
             improve your communication skills, and boost your confidence for real interviews.
           </p>
         </div>
@@ -282,7 +282,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="container mx-auto px-4 py-8 border-t">
         <div className="text-center text-gray-600">
-          <p>&copy; 2024 AI Interview Platform. All rights reserved.</p>
+          <p>&copy; 2024 MockMate AI - AI-Powered Interviews. All rights reserved.</p>
         </div>
       </footer>
     </div>

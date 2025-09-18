@@ -127,7 +127,7 @@ export default function Dashboard() {
                 <Brain className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">AI Interview Platform</h1>
+                <h1 className="text-2xl font-bold text-gray-900">MockMate AI</h1>
                 <p className="text-gray-600">Welcome back, {user?.name || user?.email}!</p>
               </div>
             </div>
