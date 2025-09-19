@@ -306,6 +306,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               // ignore detection errors
             }
           }
+          
           visionInterval = window.setInterval(tick, 4000)
           return
         }
@@ -454,12 +455,12 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }, [currentQuestionIndex, interview.questions])
 
-  const goToNextQuestion = () => {
-    if (!interview.questions || interview.questions.length === 0) return
+    const goToNextQuestion = async () => {
+      if (!interview.questions || interview.questions.length === 0) return
 
     const currentQ = interview.questions[currentQuestionIndex]
-    if (typedResponse.trim()) {
-      // Auto-submit typed response before moving on
+    if (typedResponse.trim() && currentQuestionId) {
+      await submitAnswerToBackend(typedResponse, currentQuestionId);
       sendTextMessage(typedResponse.trim())
       setTypedResponse('')
     }
@@ -694,42 +695,39 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }
 
-  const completeInterview = () => {
+  const completeInterview = async () => {
     if (!sessionId) {
-      toast.error('No session found. Please refresh and try again.')
-      return
+      toast.error('No session found. Please refresh and try again.');
+      return;
     }
 
-    // Show loading state
-    setIsCompleted(true)
-    toast.success('Completing interview...')
+    setIsCompleted(true);
+    toast.success('Completing interview...');
 
-    // If there is unsent typed text, send it before completing
-    if (typedResponse.trim()) {
-      sendTextMessage(typedResponse.trim())
-      setTypedResponse('')
+    // If there is unsent typed text, submit it to backend
+    if (typedResponse.trim() && currentQuestionId) {
+      await submitAnswerToBackend(typedResponse, currentQuestionId);
+      sendTextMessage(typedResponse.trim());
+      setTypedResponse('');
     }
 
     // Emit complete interview event
     emitWhenConnected('complete_interview', {
       sessionId,
-      finalTranscript: messages
-    })
+      finalTranscript: messages,
+    });
 
-    // Always redirect to dashboard after a reasonable delay
-    // This ensures the button always works, even if socket fails
     setTimeout(() => {
-      toast.success('Interview completed! Redirecting to dashboard...')
-      window.location.href = '/dashboard'
-    }, 1000)
+      toast.success('Interview completed! Redirecting to dashboard...');
+      window.location.href = '/dashboard';
+    }, 1000);
 
-    // Fallback: If socket is not connected after 3 seconds, still redirect
     setTimeout(() => {
       if (!socketService.isConnected()) {
-        console.warn('⚠️ Socket not connected, but proceeding with completion')
-        toast.success('Completing interview offline...')
+        console.warn('⚠️ Socket not connected, but proceeding with completion');
+        toast.success('Completing interview offline...');
       }
-    }, 3000)
+    }, 3000);
   }
 
   const cleanup = () => {
@@ -759,6 +757,19 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex]?.text || '' : ''
   const currentQuestionId = interview.questions ? interview.questions[currentQuestionIndex]?.id : undefined
   const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
+
+  const submitAnswerToBackend = async (answer: string, questionId: string) => {
+    if (!sessionId || !questionId || !answer.trim()) return;
+    try {
+      await api.post('/responses', {
+        sessionId,
+        questionId,
+        answer: answer.trim(),
+      });
+    } catch (err) {
+      toast.error('Failed to save answer. Please try again.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
