@@ -24,7 +24,7 @@ import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
 import dynamic from 'next/dynamic'
-import { useAuth } from '@/lib/useAuth'; // adjust path as needed
+import { useAuth } from '@/contexts/AuthContext'
 
 interface Question {
   id: string
