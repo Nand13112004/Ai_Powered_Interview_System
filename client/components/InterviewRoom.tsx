@@ -851,16 +851,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
             {/* Messages Area */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <div className="mb-4 flex items-center justify-center">
-                <div className="w-full max-w-md">
-                  <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
-                    <div className="text-gray-500 text-center">
-                      <div className="text-4xl mb-2">🤖</div>
-                      <div className="text-sm">MockMate AI Assistant</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">Conversation</h3>
               <div className="space-y-4 max-h-96 overflow-y-auto">
                 {messages.map((message, index) => (
@@ -885,15 +875,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
           {/* Right Column - Controls */}
           <div className="space-y-6">
-            {/* Robot watcher */}
-            <div>
-              <div className="w-full h-64 rounded-2xl border border-gray-200/60 bg-gray-100 flex items-center justify-center">
-                <div className="text-gray-500 text-center">
-                  <div className="text-4xl mb-2">🤖</div>
-                  <div className="text-sm">MockMate AI Assistant</div>
-                </div>
-              </div>
-            </div>
             {/* Audio Controls */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Audio Controls</h3>
