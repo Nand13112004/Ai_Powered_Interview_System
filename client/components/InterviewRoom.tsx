@@ -24,6 +24,7 @@ import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
 import dynamic from 'next/dynamic'
+import { useAuth } from '@/lib/useAuth'; // adjust path as needed
 
 interface Question {
   id: string
@@ -53,6 +54,7 @@ interface Message {
 }
 
 export default function InterviewRoom({ interview, onComplete }: InterviewRoomProps) {
+  const { user } = useAuth(); // user?.id is your candidateId
   const [isConnected, setIsConnected] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -227,16 +229,18 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       if (document.hidden) {
         reportIncident('tab_hidden')
         if (STRICT_MODE) {
-          toast.error('Tab switch detected. Ending interview.')
-          completeInterview()
+          toast.error('Tab switch detected. Interview terminated.')
+          completeInterview('tab_change')
+          window.location.href = '/dashboard'
         }
       }
     }
     const onBlur = () => {
       reportIncident('window_blur')
       if (STRICT_MODE) {
-        toast.error('Window focus lost. Ending interview.')
-        completeInterview()
+        toast.error('Window focus lost. Interview terminated.')
+        completeInterview('tab_change')
+        window.location.href = '/dashboard'
       }
     }
     const onCopy = (e: ClipboardEvent) => reportIncident('copy', { length: (e as any).clipboardData?.getData('text')?.length })
@@ -695,7 +699,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }
 
-  const completeInterview = async () => {
+  const completeInterview = async (reason?: string) => {
     if (!sessionId) {
       toast.error('No session found. Please refresh and try again.');
       return;
@@ -715,6 +719,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     emitWhenConnected('complete_interview', {
       sessionId,
       finalTranscript: messages,
+      reason,
     });
 
     setTimeout(() => {
@@ -759,16 +764,18 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
 
   const submitAnswerToBackend = async (answer: string, questionId: string) => {
-    if (!sessionId || !questionId || !answer.trim()) return;
-    try {
-      await api.post('/responses', {
-        sessionId,
+    if (!interview.id || !questionId || !answer.trim()) return;
+    await fetch('/api/answers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        interviewId: interview.id,
+        candidateId: user?.id,
         questionId,
-        answer: answer.trim(),
-      });
-    } catch (err) {
-      toast.error('Failed to save answer. Please try again.');
-    }
+        answerText: answer.trim(),
+        // audioUrl: ... if you have audio
+      }),
+    });
   };
 
   return (
@@ -981,10 +988,10 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               {/* Complete Interview Button */}
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <Button
-                  onClick={completeInterview}
+                  onClick={() => completeInterview()}
                   className={`w-full h-12 text-lg font-semibold rounded-xl transition-all duration-200 ${
-                    isCompleted 
-                      ? 'bg-gray-400 cursor-not-allowed' 
+                    isCompleted
+                      ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white shadow-lg hover:shadow-xl'
                   }`}
                   disabled={isCompleted}
