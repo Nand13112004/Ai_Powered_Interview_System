@@ -116,12 +116,27 @@ router.post('/', async (req, res) => {
     const existingSession = await Session.findOne({ userId: req.user.id, interviewId }).lean();
 
     if (existingSession) {
-      return res.status(409).json({ 
-        error: 'Interview already attempted',
-        message: 'You have already participated in this interview. Each candidate can only join once.',
-        sessionId: existingSession.id,
+      // If session is completed, don't allow re-entry
+      if (existingSession.status === 'completed') {
+        return res.status(409).json({ 
+          error: 'Interview already completed',
+          message: 'You have already completed this interview. Each candidate can only participate once.',
+          sessionId: existingSession._id.toString(),
+          existingSession: {
+            id: existingSession._id.toString(),
+            status: existingSession.status,
+            startedAt: existingSession.startedAt,
+            completedAt: existingSession.completedAt
+          }
+        });
+      }
+      
+      // If session is pending or in_progress, allow resumption
+      return res.status(200).json({ 
+        message: 'Resuming existing interview session',
+        sessionId: existingSession._id.toString(),
         existingSession: {
-          id: existingSession.id,
+          id: existingSession._id.toString(),
           status: existingSession.status,
           startedAt: existingSession.startedAt,
           completedAt: existingSession.completedAt

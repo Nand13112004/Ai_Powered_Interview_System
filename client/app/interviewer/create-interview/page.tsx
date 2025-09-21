@@ -164,7 +164,7 @@ export default function CreateInterview() {
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 placeholder="Duration (minutes)"
-                min={15}
+                min={1}
                 max={120}
                 required
               />

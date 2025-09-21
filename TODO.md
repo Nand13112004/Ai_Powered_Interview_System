@@ -1,43 +1,30 @@
-# Interview Interface Redesign
+# Interview Completion Flow Fixes
 
-## Goals:
-1. Make everything visible without scrolling
-2. Improve navigation when finishing interview
-3. Modern, compact design
+## Issues Identified:
+- Missing `/api/answers` endpoint connection
+- Model inconsistency between Answer and Response models
+- Missing authentication on answers endpoint
+- Interview completion flow not properly redirecting to dashboard
 
-## Changes to Implement:
+## Implementation Plan:
 
-### 1. Layout Restructure
-- [ ] Change from 3-column to 2-column layout on large screens
-- [ ] Make header more compact
-- [ ] Reduce padding and margins throughout
-- [ ] Optimize component heights
+### 1. Fix `/api/answers` endpoint
+- [ ] Add authentication middleware to answers route
+- [ ] Improve error handling and validation
+- [ ] Ensure proper response format
 
-### 2. Question Display
-- [ ] Remove red border styling
-- [ ] Make question card more compact
-- [ ] Better integration with conversation area
+### 2. Update interview completion flow
+- [ ] Ensure all answers are submitted via API endpoint
+- [ ] Add proper error handling for API calls
+- [ ] Ensure proper redirect to dashboard after completion
 
-### 3. Conversation Area
-- [ ] Reduce height of AI assistant display
-- [ ] Make chat area more compact
-- [ ] Better message styling
+### 3. Improve error handling
+- [ ] Add try-catch blocks for API calls
+- [ ] Add proper error messages and logging
+- [ ] Handle network failures gracefully
 
-### 4. Control Panels
-- [ ] Make audio controls more compact
-- [ ] Reduce Quick Actions panel size
-- [ ] Optimize Interview Details panel
-
-### 5. Navigation Improvements
-- [ ] Add completion modal/overlay instead of immediate redirect
-- [ ] Better completion flow with options
-- [ ] Improved post-interview navigation
-
-### 6. Responsive Design
-- [ ] Better mobile layout
-- [ ] Tablet optimization
-- [ ] Desktop space utilization
-
-## Files to Modify:
-- InterviewRoom.tsx (main component)
-- globals.css (custom styles)
+### 4. Testing
+- [ ] Test complete interview completion flow
+- [ ] Verify answers are properly saved to database
+- [ ] Confirm proper redirect to dashboard
+- [ ] Test error scenarios and edge cases

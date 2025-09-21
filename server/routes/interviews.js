@@ -9,13 +9,15 @@ const router = express.Router();
 
 // Using Mongoose models, no Prisma
 
+
+
 // Validation schema
 const createInterviewSchema = Joi.object({
   title: Joi.string().min(3).required(),
   description: Joi.string().optional(),
   role: Joi.string().required(),
   level: Joi.string().valid("junior", "mid", "senior").required(),
-  duration: Joi.number().min(15).max(120).required(),
+  duration: Joi.number().min(1).max(120).required(),
   questions: Joi.array().items(Joi.string()).min(1).required(),
   password: Joi.string().min(4).max(32).required() // interviewer sets password
 });

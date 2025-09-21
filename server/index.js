@@ -11,6 +11,7 @@ const interviewRoutes = require('./routes/interviews');
 const sessionRoutes = require('./routes/sessions');
 const generateQuestionsRoute = require('./routes/generateQuestions');
 const answersRouter = require('./routes/answers');
+const responsesRouter = require('./routes/responses');
 const { authenticateToken } = require('./middleware/auth');
 const { setupSocketHandlers } = require('./socket/handlers');
 const { logger } = require('./utils/logger');
@@ -66,6 +67,7 @@ app.use('/api/interviews', authenticateToken, interviewRoutes);
 app.use('/api/sessions', authenticateToken, sessionRoutes);
 app.use('/api/generate-questions', generateQuestionsRoute);
 app.use('/api/answers', answersRouter);
+app.use('/api/responses', responsesRouter);
 
 // Socket.IO connection handling
 setupSocketHandlers(io);

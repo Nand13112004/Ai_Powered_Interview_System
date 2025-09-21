@@ -23,6 +23,7 @@ import {
 import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
+import axios from 'axios'
 import dynamic from 'next/dynamic'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -67,6 +68,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [elapsedTime, setElapsedTime] = useState(0)
   const [isCompleted, setIsCompleted] = useState(false)
   const [incidentCount, setIncidentCount] = useState(0)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [sessionLoading, setSessionLoading] = useState(true)
   const INCIDENT_THRESHOLD = 5
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -80,7 +83,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const pendingJoinSessionIdRef = useRef<string | null>(null)
 
-  // Strict mode configuration
+  // Strict mode configuration - enabled for anti-cheating
   const STRICT_MODE = true
   const fatalIncidents = new Set([
     'multiple_faces_detected',
@@ -123,10 +126,20 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
     const enterFullscreen = async () => {
       try {
-        if (STRICT_MODE && document.documentElement.requestFullscreen) {
+        if (document.documentElement.requestFullscreen) {
           await document.documentElement.requestFullscreen();
+          toast.success('Fullscreen mode enabled for secure interview');
         }
-      } catch (_) {}
+      } catch (error) {
+        console.warn('Fullscreen request failed:', error);
+        toast.error('Fullscreen is required for this interview. Please enable it manually.');
+        // Give user a chance to enable fullscreen manually
+        setTimeout(() => {
+          if (!document.fullscreenElement) {
+            toast.error('Please enable fullscreen mode to continue the interview');
+          }
+        }, 3000);
+      }
     }
 
     const boot = async () => {
@@ -137,7 +150,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       startTimer();
     }
 
-    boot()
+    boot();
 
     // Handle browser close/refresh
     const handleBeforeUnload = () => {
@@ -158,8 +171,15 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       const inFs = !!document.fullscreenElement;
       if (!inFs && STRICT_MODE && !isCompleted) {
         reportIncident('fullscreen_exit');
-        toast.error('You must stay in fullscreen for the interview. Ending interview.');
-        completeInterview();
+        // Immediate warning
+        toast.error('Fullscreen exit detected! Please return to fullscreen immediately.');
+        // Give user 3 seconds to return to fullscreen
+        setTimeout(() => {
+          if (!document.fullscreenElement && !isCompleted) {
+            toast.error('Interview terminated due to fullscreen exit.');
+            completeInterview('fullscreen_exit');
+          }
+        }, 3000); // 3 seconds to return to fullscreen
       }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -229,18 +249,32 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       if (document.hidden) {
         reportIncident('tab_hidden')
         if (STRICT_MODE) {
-          toast.error('Tab switch detected. Interview terminated.')
-          completeInterview('tab_change')
-          window.location.href = '/dashboard'
+          // Immediate warning
+          toast.error('Tab switch detected! Please return to the interview tab immediately.');
+          // Give user 2 seconds to return
+          setTimeout(() => {
+            if (document.hidden && !isCompleted) {
+              toast.error('Interview terminated due to tab switch.');
+              completeInterview('tab_change')
+              window.location.href = '/dashboard'
+            }
+          }, 2000); // 2 seconds to return
         }
       }
     }
     const onBlur = () => {
       reportIncident('window_blur')
       if (STRICT_MODE) {
-        toast.error('Window focus lost. Interview terminated.')
-        completeInterview('tab_change')
-        window.location.href = '/dashboard'
+        // Immediate warning
+        toast.error('Window focus lost! Please return focus immediately.');
+        // Give user 2 seconds to return focus
+        setTimeout(() => {
+          if (!document.hasFocus() && !isCompleted) {
+            toast.error('Interview terminated due to focus loss.');
+            completeInterview('tab_change')
+            window.location.href = '/dashboard'
+          }
+        }, 2000); // 2 seconds to return focus
       }
     }
     const onCopy = (e: ClipboardEvent) => reportIncident('copy', { length: (e as any).clipboardData?.getData('text')?.length })
@@ -459,8 +493,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }, [currentQuestionIndex, interview.questions])
 
-    const goToNextQuestion = async () => {
-      if (!interview.questions || interview.questions.length === 0) return
+  const goToNextQuestion = async () => {
+    if (!interview.questions || interview.questions.length === 0) return
 
     const currentQ = interview.questions[currentQuestionIndex]
     if (typedResponse.trim() && currentQuestionId) {
@@ -472,19 +506,95 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     // Move to next if exists
     if (currentQuestionIndex < interview.questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1)
-    } else {
-      // Last question → complete interview
-      toast.success('All questions answered. Completing interview...')
+    }
+  }
+
+  const finishInterview = async () => {
+    if (!sessionId) {
+      toast.error('Session not ready. Please wait a moment and try again.');
+      return;
+    }
+    if (isCompleted) return; // Prevent double completion
+
+    try {
+      // Submit any remaining typed response
+      if (typedResponse.trim() && currentQuestionId) {
+        await submitAnswerToBackend(typedResponse, currentQuestionId);
+        sendTextMessage(typedResponse.trim());
+        setTypedResponse('');
+      }
+
+      // Submit all answers that haven't been submitted yet
+      await submitAllAnswers();
+
+      toast.success('All answers submitted. Completing interview...')
       completeInterview()
+    } catch (error) {
+      console.error('Error finishing interview:', error);
+      toast.error('Failed to submit answers. Please try again.');
+    }
+  }
+
+  const submitAllAnswers = async () => {
+    if (!interview.questions || !user?.id) return;
+
+    const submissionPromises: Promise<any>[] = [];
+    const submittedAnswers = new Set<string>();
+
+    // Create a map of question responses from messages
+    const questionResponses = new Map<string, string>();
+    
+    // Group messages by question index (assuming order matches question order)
+    let questionIndex = 0;
+    for (const message of messages) {
+      if (message.type === 'interviewer') {
+        // This is a question, increment index
+        questionIndex++;
+      } else if (message.type === 'candidate' && message.text.trim()) {
+        // This is a candidate response
+        const currentQIndex = Math.max(0, questionIndex - 1);
+        if (currentQIndex < interview.questions.length) {
+          const questionId = interview.questions[currentQIndex].id;
+          if (!questionResponses.has(questionId)) {
+            questionResponses.set(questionId, message.text.trim());
+          }
+        }
+      }
+    }
+
+    // Submit answers for all questions that have responses
+    questionResponses.forEach((responseText, questionId) => {
+      if (!answeredByQuestionId[questionId] && responseText.trim()) {
+        submissionPromises.push(
+          submitAnswerToBackend(responseText, questionId)
+        );
+        submittedAnswers.add(questionId);
+      }
+    });
+
+    // Wait for all submissions to complete
+    if (submissionPromises.length > 0) {
+      const results = await Promise.allSettled(submissionPromises);
+      const successful = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+      
+      console.log(`Submitted ${successful} answers successfully, ${failed} failed`);
+      
+      if (failed > 0) {
+        console.warn('Some answers failed to submit:', results.filter(r => r.status === 'rejected'));
+      }
     }
   }
 
   const initializeSocket = () => {
     try {
+      console.log('🔄 Initializing socket connection...')
       socketService.connect()
       setIsConnected(true)
+      console.log('✅ Socket connection initialized successfully')
 
       socketService.on('interview_joined', (data: { sessionId: string }) => {
+        console.log('✅ Interview joined successfully:', data)
         setSessionId(data.sessionId)
         setCurrentQuestionIndex(0)
         const firstQuestion = interview.questions && interview.questions.length > 0 ? interview.questions[0].text : null
@@ -550,24 +660,56 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   }
 
   const startSession = async () => {
+    setSessionLoading(true)
+    setSessionError(null)
     try {
+      console.log('🔄 Starting session creation for interview:', interview.id)
+      console.log('🔄 Current sessionId before creation:', sessionId)
+      console.log('🔄 Current pendingJoinSessionId:', pendingJoinSessionIdRef.current)
+      console.log('🔄 User info:', user)
+
       const response = await api.post('/sessions', {
         interviewId: interview.id
       })
+
+      console.log('✅ Session creation response:', response.data)
+      const newSessionId = response.data.session?.id || response.data.sessionId
+      console.log('✅ Session ID extracted:', newSessionId)
+
+      if (!newSessionId) {
+        throw new Error('No session ID received from server')
+      }
+
+      setSessionId(newSessionId)
+      setSessionLoading(false)
+      setSessionError(null)
+      console.log('✅ Session ID set in state:', newSessionId)
       
-      const sessionId = response.data.session.id
-      if (socketService.isConnected()) {
-        socketService.emit('join_interview', { sessionId })
+      // Show appropriate message for new session vs resumption
+      if (response.data.message?.includes('Resuming')) {
+        toast.success('Resuming your interview session')
       } else {
-        pendingJoinSessionIdRef.current = sessionId
-        emitWhenConnected('join_interview', { sessionId })
+        toast.success('Interview session started')
+      }
+
+      if (socketService.isConnected()) {
+        console.log('🔄 Socket is connected, emitting join_interview')
+        socketService.emit('join_interview', { sessionId: newSessionId })
+      } else {
+        console.log('🔄 Socket not connected, storing in pending join')
+        pendingJoinSessionIdRef.current = newSessionId
+        emitWhenConnected('join_interview', { sessionId: newSessionId })
       }
     } catch (error: any) {
+      console.error('❌ Session creation error:', error)
+      console.error('❌ Error response:', error.response?.data)
+      console.error('❌ Error status:', error.response?.status)
+
       // Handle 409 Conflict - interview already attempted
       if (error.response?.status === 409 && error.response?.data?.sessionId) {
         const existingSession = error.response.data.existingSession
         console.log('🚫 Interview already attempted:', existingSession)
-        
+
         if (existingSession.status === 'completed') {
           toast.error('You have already completed this interview. Each candidate can only participate once.')
           // Redirect to dashboard after showing error
@@ -577,6 +719,12 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         } else {
           toast.success('Resuming existing interview session')
           const existingSessionId = error.response.data.sessionId
+          console.log('✅ Using existing session ID:', existingSessionId)
+
+          setSessionId(existingSessionId)
+          setSessionLoading(false)
+          setSessionError(null)
+
           if (socketService.isConnected()) {
             socketService.emit('join_interview', { sessionId: existingSessionId })
           } else {
@@ -584,12 +732,41 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
             emitWhenConnected('join_interview', { sessionId: existingSessionId })
           }
         }
+      } else if (error.response?.status === 401) {
+        toast.error('Authentication failed. Please login again.')
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 2000)
+      } else if (error.response?.status === 404) {
+        toast.error('Interview not found. Please check the interview ID.')
+        setTimeout(() => {
+          window.location.href = '/dashboard'
+        }, 2000)
       } else {
-        console.error('Session creation failed:', error.response?.data)
+        setSessionError(error.response?.data?.error || 'Failed to start session')
+        setSessionLoading(false)
         toast.error(error.response?.data?.error || 'Failed to start session')
       }
     }
   }
+
+  // Add a timeout to fail gracefully if sessionId is not set
+  useEffect(() => {
+    if (sessionId || isCompleted) {
+      setSessionLoading(false)
+      setSessionError(null)
+      return
+    }
+    setSessionLoading(true)
+    setSessionError(null)
+    const timeout = setTimeout(() => {
+      if (!sessionId && !isCompleted) {
+        setSessionError('Failed to prepare your interview session. Please check your connection and try again.')
+        setSessionLoading(false)
+      }
+    }, 10000)
+    return () => clearTimeout(timeout)
+  }, [sessionId, isCompleted])
 
   const startTimer = () => {
     intervalRef.current = setInterval(() => {
@@ -700,20 +877,34 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   }
 
   const completeInterview = async (reason?: string) => {
+    console.log('🔄 Complete interview called. Current sessionId:', sessionId)
+    console.log('🔄 Current state - isConnected:', isConnected, 'isCompleted:', isCompleted)
+
     if (!sessionId) {
-      toast.error('No session found. Please refresh and try again.');
-      return;
+      console.error('❌ No sessionId found when trying to complete interview')
+      console.log('❌ Debug info:', {
+        interviewId: interview.id,
+        userId: user?.id,
+        isConnected,
+        isCompleted,
+        messagesCount: messages.length,
+        currentQuestionIndex,
+        pendingJoinSessionId: pendingJoinSessionIdRef.current
+      })
+
+      // Try to recover session from pending join
+      if (pendingJoinSessionIdRef.current) {
+        console.log('🔄 Attempting to recover session from pending join:', pendingJoinSessionIdRef.current)
+        setSessionId(pendingJoinSessionIdRef.current)
+        pendingJoinSessionIdRef.current = null
+      } else {
+        toast.error('No session found. Please refresh and try again.');
+        return;
+      }
     }
 
     setIsCompleted(true);
     toast.success('Completing interview...');
-
-    // If there is unsent typed text, submit it to backend
-    if (typedResponse.trim() && currentQuestionId) {
-      await submitAnswerToBackend(typedResponse, currentQuestionId);
-      sendTextMessage(typedResponse.trim());
-      setTypedResponse('');
-    }
 
     // Emit complete interview event
     emitWhenConnected('complete_interview', {
@@ -722,17 +913,21 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       reason,
     });
 
+    // Wait a moment for the server to process completion
     setTimeout(() => {
       toast.success('Interview completed! Redirecting to dashboard...');
+      // Use router.push for better navigation
       window.location.href = '/dashboard';
-    }, 1000);
+    }, 1500);
 
+    // Fallback timeout in case socket doesn't respond
     setTimeout(() => {
       if (!socketService.isConnected()) {
         console.warn('⚠️ Socket not connected, but proceeding with completion');
         toast.success('Completing interview offline...');
+        window.location.href = '/dashboard';
       }
-    }, 3000);
+    }, 5000);
   }
 
   const cleanup = () => {
@@ -764,19 +959,86 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
 
   const submitAnswerToBackend = async (answer: string, questionId: string) => {
-    if (!interview.id || !questionId || !answer.trim()) return;
-    await fetch('/api/answers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (!interview.id || !questionId || !answer.trim() || !user?.id) {
+      console.warn('Missing required data for answer submission:', {
         interviewId: interview.id,
-        candidateId: user?.id,
+        questionId,
+        answer: answer.trim(),
+        userId: user?.id
+      });
+      return;
+    }
+
+    try {
+      // Submit to Answer collection (for answer tracking)
+      const answerResponse = await api.post('/answers', {
+        interviewId: interview.id,
+        candidateId: user.id,
         questionId,
         answerText: answer.trim(),
-        // audioUrl: ... if you have audio
-      }),
-    });
+      });
+
+      console.log('✅ Answer submitted successfully:', answerResponse.data);
+
+      // Also submit to Response collection (for interviewer view)
+      if (sessionId) {
+        try {
+          const responseResponse = await api.post('/responses', {
+            userId: user.id,
+            interviewId: interview.id,
+            sessionId,
+            questionId,
+            text: answer.trim(),
+          });
+          console.log('✅ Response submitted successfully:', responseResponse.data);
+        } catch (responseError) {
+          console.warn('Failed to submit response:', responseError);
+          // Don't fail the whole process if response submission fails
+        }
+      }
+
+      // Mark question as answered
+      setAnsweredByQuestionId(prev => ({ ...prev, [questionId]: true }));
+
+      return answerResponse.data;
+    } catch (error: any) {
+      console.error('❌ Failed to submit answer:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
+      toast.error(`Failed to save answer: ${errorMessage}`);
+
+      // Don't throw error to prevent breaking the interview flow
+      // The answer will still be saved via socket for real-time processing
+    }
   };
+
+  // Retry handler
+  const handleRetrySession = () => {
+    setSessionError(null)
+    setSessionLoading(true)
+    startSession()
+  }
+
+  // Show loading or error UI
+  // if ((sessionLoading || (!sessionId && !isCompleted)) && !sessionError) {
+  //   return (
+  //     <div className="flex items-center justify-center min-h-screen">
+  //       <div className="text-lg text-gray-700">
+  //         Preparing your interview session...
+  //       </div>
+  //     </div>
+  //   )
+  // }
+
+  // if (sessionError) {
+  //   return (
+  //     <div className="flex flex-col items-center justify-center min-h-screen">
+  //       <div className="text-lg text-red-600 mb-4">{sessionError}</div>
+  //       <Button onClick={handleRetrySession} className="bg-blue-600 text-white px-6 py-2 rounded-lg">
+  //         Retry
+  //       </Button>
+  //     </div>
+  //   )
+  // }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
@@ -839,8 +1101,10 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                     </p>
                   </div>
                   <Button
-                    onClick={goToNextQuestion}
-                    disabled={!interview.questions ? true : (!isCurrentAnswered && !typedResponse.trim())}
+                    onClick={currentQuestionIndex < (interview.questions?.length || 0) - 1 ? goToNextQuestion : finishInterview}
+                    disabled={
+                      !interview.questions || !sessionId
+                    }
                     className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
                   >
                     {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
@@ -967,7 +1231,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               </div>
 
               {/* Complete Interview Button */}
-              <div className="mt-6 pt-6 border-t border-gray-200">
+              {/* <div className="mt-6 pt-6 border-t border-gray-200">
                 <Button
                   onClick={() => completeInterview()}
                   className={`w-full h-12 text-lg font-semibold rounded-xl transition-all duration-200 ${
@@ -980,7 +1244,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                   <CheckCircle className="h-5 w-5 mr-2" />
                   {isCompleted ? 'Completing...' : 'Complete Interview'}
                 </Button>
-              </div>
+              </div> */}
             </div>
 
             {/* Interview Details */}

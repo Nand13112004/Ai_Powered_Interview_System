@@ -8,7 +8,6 @@ const userSchema = new mongoose.Schema({
   isVerified: { type: Boolean, default: false },
   verificationCode: String,
   verificationExpires: Date,
-  // ...other fields
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);
