@@ -57,7 +57,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       Cookies.set('token', token, { expires: 7 })
       setUser(user)
-      router.push('/dashboard')
+      if (user.role === 'interviewer') {
+        router.push('/interviewer/dashboard')
+      } else {
+        router.push('/dashboard')
+      }
     } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Login failed')
     }
