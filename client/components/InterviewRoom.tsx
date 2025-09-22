@@ -63,6 +63,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [typedResponse, setTypedResponse] = useState('')
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [answeredByQuestionId, setAnsweredByQuestionId] = useState<Record<string, boolean>>({})
+  const [draftAnswersByQuestionId, setDraftAnswersByQuestionId] = useState<Record<string, string>>({})
   // Removed duplicate declaration of currentQuestion state
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [elapsedTime, setElapsedTime] = useState(0)
@@ -493,6 +494,10 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }, [currentQuestionIndex, interview.questions])
 
+  const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex]?.text || '' : ''
+  const currentQuestionId = interview.questions ? interview.questions[currentQuestionIndex]?.id : undefined
+  const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
+
   const goToNextQuestion = async () => {
     if (!interview.questions || interview.questions.length === 0) return
 
@@ -501,6 +506,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       await submitAnswerToBackend(typedResponse, currentQuestionId);
       sendTextMessage(typedResponse.trim())
       setTypedResponse('')
+      // Clear draft when answer is submitted
+      setDraftAnswersByQuestionId(prev => ({ ...prev, [currentQuestionId]: '' }))
     }
 
     // Move to next if exists
@@ -508,6 +515,35 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       setCurrentQuestionIndex(currentQuestionIndex + 1)
     }
   }
+
+  // Save draft when navigating away from question
+  const handleQuestionNavigation = (newIndex: number) => {
+    if (!currentQuestionId || !interview.questions) return
+
+    // Save current typed response as draft if it exists
+    if (typedResponse.trim()) {
+      setDraftAnswersByQuestionId(prev => ({
+        ...prev,
+        [currentQuestionId]: typedResponse.trim()
+      }))
+    }
+
+    setCurrentQuestionIndex(newIndex)
+  }
+
+  // Restore draft when returning to question
+  useEffect(() => {
+    if (currentQuestionId && draftAnswersByQuestionId[currentQuestionId]) {
+      setTypedResponse(draftAnswersByQuestionId[currentQuestionId])
+    } else if (currentQuestionId) {
+      setTypedResponse('')
+    }
+  }, [currentQuestionIndex, currentQuestionId, draftAnswersByQuestionId])
+  
+
+
+
+
 
   const finishInterview = async () => {
     if (!sessionId) {
@@ -786,17 +822,20 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data)
+          console.log('Audio chunk received:', event.data.size, 'bytes')
         }
       }
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        console.log('Audio recording stopped. Total size:', audioBlob.size, 'bytes')
         sendAudioData(audioBlob)
       }
 
       mediaRecorder.start()
       setIsRecording(true)
       toast.success('Recording started')
+      console.log('Audio recording started')
     } catch (error) {
       console.error('Error starting recording:', error)
       toast.error('Failed to start recording. Please check microphone permissions.')
@@ -811,19 +850,44 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     }
   }
 
-  const sendAudioData = (audioBlob: Blob) => {
+  const sendAudioData = async (audioBlob: Blob) => {
     if (!sessionId) return
 
+    console.log('Sending audio data. Blob size:', audioBlob.size, 'bytes')
+    console.log('Blob type:', audioBlob.type)
+
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
       const base64Audio = reader.result?.toString().split(',')[1]
       if (base64Audio) {
+        console.log('Base64 audio length:', base64Audio.length)
+        const questionId = interview.questions[currentQuestionIndex]?.id
+        
+        // Send via WebSocket for real-time processing
         socketService.emit('audio_data', {
           sessionId,
           audioBlob: base64Audio,
           timestamp: new Date().toISOString(),
-          questionId: interview.questions[currentQuestionIndex]?.id
+          questionId
         })
+
+        // Also submit to API for database storage
+        if (questionId && user?.id) {
+          try {
+            console.log('Submitting audio to API...')
+            const response = await api.post('/responses', {
+              userId: user.id,
+              interviewId: interview.id,
+              sessionId,
+              questionId,
+              audioData: base64Audio
+            });
+            console.log('✅ Audio response submitted successfully:', response.data);
+          } catch (error) {
+            console.error('Failed to submit audio response:', error);
+            // Don't fail the whole process if API submission fails
+          }
+        }
 
         const qId = interview.questions[currentQuestionIndex]?.id
         if (qId) {
@@ -954,9 +1018,11 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
   const progress = (elapsedTime / (interview.duration * 60)) * 100
 
-  const currentQuestion = interview.questions ? interview.questions[currentQuestionIndex]?.text || '' : ''
-  const currentQuestionId = interview.questions ? interview.questions[currentQuestionIndex]?.id : undefined
-  const isCurrentAnswered = currentQuestionId ? !!answeredByQuestionId[currentQuestionId] : false
+  // Helper function to get question ID for a given index
+  const getQuestionId = (index: number) => interview.questions ? interview.questions[index]?.id : undefined
+
+  // Current question data - must be declared before useEffects that use them
+  
 
   const submitAnswerToBackend = async (answer: string, questionId: string) => {
     if (!interview.id || !questionId || !answer.trim() || !user?.id) {
@@ -1083,7 +1149,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column - Question and Chat */}
+          {/* Left Column - Question and Answer */}
           <div className="lg:col-span-2 space-y-6">
             {/* Question Box styled like the image */}
             <div className="relative">
@@ -1100,40 +1166,103 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                       {currentQuestion || 'Waiting for questions...'}
                     </p>
                   </div>
-                  <Button
-                    onClick={currentQuestionIndex < (interview.questions?.length || 0) - 1 ? goToNextQuestion : finishInterview}
-                    disabled={
-                      !interview.questions || !sessionId
-                    }
-                    className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                  >
-                    {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
-                  </Button>
                 </div>
               </div>
             </div>
 
-            {/* Messages Area */}
+            {/* Answer Section */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Conversation</h3>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${message.type === 'candidate' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl ${
-                        message.type === 'candidate'
-                          ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}
-                    >
-                      <p className="text-sm">{message.text}</p>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Answer</h3>
+
+              {/* Text Response */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Type your response
+                  </label>
+                  <textarea
+                    value={typedResponse}
+                    onChange={(e) => setTypedResponse(e.target.value)}
+                    placeholder="Type your response here..."
+                    className="w-full border border-gray-300 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows={4}
+                  />
+                </div>
+
+                {/* <Button
+                  onClick={() => {
+                    const text = typedResponse
+                    if (text.trim()) {
+                      sendTextMessage(text)
+                      setTypedResponse('')
+                    }
+                  }}
+                  className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
+                >
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  Send Response
+                </Button> */}
+              </div>
+
+              {/* Next Question Button */}
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <Button
+                  onClick={currentQuestionIndex < (interview.questions?.length || 0) - 1 ? goToNextQuestion : finishInterview}
+                  disabled={
+                    !interview.questions || !sessionId
+                  }
+                  className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
+                >
+                  {currentQuestionIndex < (interview.questions?.length || 0) - 1 ? 'Next Question' : 'Finish Interview'}
+                </Button>
+              </div>
+
+              {/* Question Navigation */}
+              {interview.questions && interview.questions.length > 1 && (
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Jump to Question:</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {interview.questions.map((question, index) => {
+                      const isAnswered = answeredByQuestionId[question.id]
+                      const isCurrent = index === currentQuestionIndex
+
+                      return (
+                        <button
+                          key={question.id}
+                          onClick={() => setCurrentQuestionIndex(index)}
+                          disabled={!sessionId}
+                          className={`
+                            w-10 h-10 rounded-lg border-2 font-semibold text-sm transition-all duration-200
+                            flex items-center justify-center
+                            ${isCurrent
+                              ? 'border-blue-500 bg-blue-500 text-white shadow-lg'
+                              : isAnswered
+                                ? 'border-green-500 bg-green-500 text-white hover:bg-green-600 hover:border-green-600'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                            }
+                            ${!sessionId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                          `}
+                        >
+                          {index + 1}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                    <span>Click any number to jump to that question</span>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-1">
+                        <div className="w-3 h-3 rounded border-2 border-gray-300 bg-white"></div>
+                        <span>Not answered</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <div className="w-3 h-3 rounded border-2 border-green-500 bg-green-500"></div>
+                        <span>Answered</span>
+                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1142,7 +1271,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
             {/* Audio Controls */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Audio Controls</h3>
-              
+
               {/* Recording Status */}
               <div className="mb-6">
                 {isRecording ? (
@@ -1162,8 +1291,8 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               <Button
                 onClick={isRecording ? stopRecording : startRecording}
                 className={`w-full h-14 text-lg font-semibold rounded-xl transition-all duration-200 ${
-                  isRecording 
-                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl' 
+                  isRecording
+                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl'
                     : 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl'
                 }`}
               >
@@ -1196,79 +1325,28 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
               </div>
             </div>
 
-            {/* Quick Actions */}
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-              
-              {/* Text Response */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Type your response
-                  </label>
-                  <textarea
-                    value={typedResponse}
-                    onChange={(e) => setTypedResponse(e.target.value)}
-                    placeholder="Type your response here..."
-                    className="w-full border border-gray-300 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                    rows={4}
-                  />
-                </div>
-                
-                <Button
-                  onClick={() => {
-                    const text = typedResponse
-                    if (text.trim()) {
-                      sendTextMessage(text)
-                      setTypedResponse('')
-                    }
-                  }}
-                  className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  Send Response
-                </Button>
-              </div>
-
-              {/* Complete Interview Button */}
-              {/* <div className="mt-6 pt-6 border-t border-gray-200">
-                <Button
-                  onClick={() => completeInterview()}
-                  className={`w-full h-12 text-lg font-semibold rounded-xl transition-all duration-200 ${
-                    isCompleted
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white shadow-lg hover:shadow-xl'
-                  }`}
-                  disabled={isCompleted}
-                >
-                  <CheckCircle className="h-5 w-5 mr-2" />
-                  {isCompleted ? 'Completing...' : 'Complete Interview'}
-                </Button>
-              </div> */}
-            </div>
-
             {/* Interview Details */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Interview Details</h3>
-              
+
               <div className="space-y-4">
                 <div className="flex items-center justify-between py-2">
                   <span className="text-gray-600 font-medium">Duration</span>
                   <span className="text-gray-900 font-semibold">{interview.duration} minutes</span>
                 </div>
-                
+
                 <div className="flex items-center justify-between py-2">
                   <span className="text-gray-600 font-medium">Level</span>
                   <Badge className="bg-blue-100 text-blue-800 border-blue-200">
                     {interview.level}
                   </Badge>
                 </div>
-                
+
                 <div className="flex items-center justify-between py-2">
                   <span className="text-gray-600 font-medium">Role</span>
                   <span className="text-gray-900 font-semibold">{interview.role}</span>
                 </div>
-                
+
                 <div className="flex items-center justify-between py-2">
                   <span className="text-gray-600 font-medium">Questions</span>
                   <span className="text-gray-900 font-semibold">{interview.questions?.length || 0}</span>

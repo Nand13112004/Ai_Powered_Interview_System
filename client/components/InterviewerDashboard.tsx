@@ -54,11 +54,45 @@ export default function InterviewerDashboard() {
       const byteChars = atob(b64);
       const byteNumbers = new Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'audio/webm' });
-      const url = URL.createObjectURL(blob);
+      
+      // Try different audio formats
+      const formats = ['audio/webm', 'audio/mp4', 'audio/wav', 'audio/ogg'];
+      let audioBlob;
+      
+      for (const format of formats) {
+        try {
+          audioBlob = new Blob([new Uint8Array(byteNumbers)], { type: format });
+          break;
+        } catch (e) {
+          continue;
+        }
+      }
+      
+      if (!audioBlob) {
+        // Fallback to generic audio format
+        audioBlob = new Blob([new Uint8Array(byteNumbers)], { type: 'audio/webm' });
+      }
+      
+      const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
-      audio.play();
+      
+      audio.onloadeddata = () => {
+        console.log('Audio loaded successfully');
+      };
+      
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
+        URL.revokeObjectURL(url);
+      };
+      
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+      };
+      
+      audio.play().catch(e => {
+        console.error('Failed to play audio:', e);
+        URL.revokeObjectURL(url);
+      });
     } catch (e) {
       console.error('Failed to play audio', e);
     }
@@ -199,7 +233,21 @@ export default function InterviewerDashboard() {
                           <td className="px-3 py-2 whitespace-pre-wrap">{r.text || '-'}</td>
                           <td className="px-3 py-2">
                             {r.audioData ? (
-                              <Button size="sm" onClick={() => playAudioBase64(r.audioData)}>Play</Button>
+                              <div className="flex items-center space-x-2">
+                                <Button 
+                                  size="sm" 
+                                  onClick={() => {
+                                    console.log('Playing audio for response:', r.id);
+                                    console.log('Audio data length:', r.audioData?.length);
+                                    playAudioBase64(r.audioData);
+                                  }}
+                                >
+                                  Play
+                                </Button>
+                                <span className="text-xs text-gray-500">
+                                  {r.audioData?.length ? `${Math.round(r.audioData.length / 1024)}KB` : '0KB'}
+                                </span>
+                              </div>
                             ) : (
                               <span className="text-gray-400">No audio</span>
                             )}

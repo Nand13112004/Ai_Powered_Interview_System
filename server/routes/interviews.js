@@ -100,6 +100,20 @@ router.get('/:id/responses', async (req, res) => {
     const { id } = req.params;
 
     const responsesRaw = await Response.find({ interviewId: id }).sort({ createdAt: 1 }).lean();
+    
+    // Get user and question information
+    const userIds = [...new Set(responsesRaw.map(r => r.userId))];
+    const questionIds = [...new Set(responsesRaw.map(r => r.questionId))];
+    
+    const User = require('../models/User');
+    const Question = require('../models/Question');
+    
+    const users = await User.find({ _id: { $in: userIds } }).lean();
+    const questions = await Question.find({ _id: { $in: questionIds } }).lean();
+    
+    const userMap = new Map(users.map(u => [u._id.toString(), u]));
+    const questionMap = new Map(questions.map(q => [q._id.toString(), q]));
+    
     const responses = responsesRaw.map(r => ({
       id: r._id.toString(),
       userId: r.userId,
@@ -109,6 +123,8 @@ router.get('/:id/responses', async (req, res) => {
       text: r.text,
       audioData: r.audioData ? Buffer.from(r.audioData).toString('base64') : null,
       createdAt: r.createdAt,
+      user: userMap.get(r.userId),
+      question: questionMap.get(r.questionId)
     }));
     res.json({ responses });
   } catch (error) {
