@@ -1,37 +1,59 @@
-# InterviewRoom UI Reorganization - Completed ✅
+# Role-Based Registration Implementation
 
-## Changes Made
+## Current Status: In Progress
 
-### ✅ Layout Reorganization
-- **Removed conversation block**: Eliminated the entire "Conversation" section that displayed message history
-- **Moved answer functionality**: Relocated text response input and "Send Response" button from right column to directly below the question
-- **Renamed section**: Changed "Quick Actions" to "Answer" for better clarity
-- **Repositioned Next Question button**: Moved from beside the question to below the answer section
+### Completed:
+- [ ] Analysis of current register page and backend support
+- [ ] Plan creation and user approval
 
-### ✅ New Layout Structure
-- **Left Column (2/3 width)**:
-  - Question Box (with question number and text)
-  - Answer Section (with text input and send button)
-  - Next Question Button (with border separator)
-- **Right Column (1/3 width)**:
-  - Audio Controls (recording functionality)
-  - Interview Details (duration, level, role, questions count)
+### In Progress:
+- [ ] Implement role selection step
+- [ ] Create multi-step form structure for candidates (4 steps)
+- [ ] Create multi-step form structure for interviewers (2 steps)
+- [ ] Add progress indicator component
+- [ ] Implement file upload for profile photo and resume
+- [ ] Add form validation for each step
+d- [ ] Add navigation between steps (Back/Next)
+- [ ] Test complete registration flow
 
-### ✅ Functionality Preserved
-- Text response submission still works
-- Next Question/Finish Interview navigation maintained
-- Audio recording controls unchanged
-- Interview details display preserved
-- All existing state management and API calls intact
+### Pending:
+- [ ] Test email verification flow
+- [ ] Verify data saving to database
+- [ ] Mobile responsiveness testing
+- [ ] Error handling improvements
 
-## Testing Status
-- ✅ Layout changes implemented successfully
-- ✅ Component structure reorganized as requested
-- ✅ All existing functionality preserved
-- ⏳ Ready for user testing and feedback
+## Implementation Plan:
 
-## Next Steps
-1. User can test the new layout in the browser
-2. Verify responsive design works correctly
-3. Confirm all interactive elements function properly
-4. Check that the interview flow works as expected
+### 1. Role Selection Step
+- Create initial role selection screen
+- Two clear options: Candidate vs Interviewer
+- Visual indicators and descriptions
+
+### 2. Multi-Step Forms
+**Candidate Flow:**
+- Step 1: Personal Information (Name, Email, Phone, Profile Photo)
+- Step 2: Education Details (College, Degree, Branch, Year, GPA)
+- Step 3: Professional Experience (Organization, Role, Experience, Skills)
+- Step 4: Application Specific (Resume, Cover Letter, Interests, Links)
+
+**Interviewer Flow:**
+- Step 1: Personal Information (Name, Email, Phone, Profile Photo)
+- Step 2: Professional Information (Company, Department, Role, Experience)
+
+### 3. Enhanced Features
+- Progress bar showing current step
+- Form validation at each step
+- File upload components
+- Back/Next navigation
+- Auto-save functionality
+- Better error handling
+
+### 4. Testing Checklist
+- [ ] Role selection works correctly
+- [ ] Candidate registration flow (all 4 steps)
+- [ ] Interviewer registration flow (all 2 steps)
+- [ ] File upload functionality
+- [ ] Form validation
+- [ ] Email verification flow
+- [ ] Data persistence in database
+- [ ] Mobile responsiveness

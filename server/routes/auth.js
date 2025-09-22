@@ -45,7 +45,49 @@ const registerSchema = Joi.object({
     'string.min': 'Name must be at least 2 characters long',
     'string.max': 'Name must not exceed 50 characters'
   }),
-  role: Joi.string().valid('candidate', 'interviewer', 'admin').default('candidate')
+  role: Joi.string().valid('candidate', 'interviewer', 'admin').default('candidate'),
+
+  // Personal Information (common)
+  phone: Joi.string().min(10).max(15).optional().messages({
+    'string.min': 'Phone number must be at least 10 characters long',
+    'string.max': 'Phone number must not exceed 15 characters'
+  }),
+  profilePhoto: Joi.string().optional(),
+
+  // Candidate-specific fields
+  education: Joi.object({
+    college: Joi.string().optional(),
+    degree: Joi.string().optional(),
+    branch: Joi.string().optional(),
+    graduationYear: Joi.string().optional(),
+    gpa: Joi.string().optional()
+  }).optional(),
+
+  experience: Joi.object({
+    organization: Joi.string().optional(),
+    jobTitle: Joi.string().optional(),
+    totalExperience: Joi.string().optional(),
+    skills: Joi.array().items(Joi.string()).optional()
+  }).optional(),
+
+  application: Joi.object({
+    resume: Joi.string().optional(),
+    coverLetter: Joi.string().optional(),
+    areasOfInterest: Joi.array().items(Joi.string()).optional(),
+    links: Joi.object({
+      linkedin: Joi.string().optional(),
+      github: Joi.string().optional(),
+      portfolio: Joi.string().optional()
+    }).optional()
+  }).optional(),
+
+  // Interviewer-specific fields
+  professional: Joi.object({
+    companyName: Joi.string().optional(),
+    department: Joi.string().optional(),
+    jobTitle: Joi.string().optional(),
+    experienceYears: Joi.string().optional()
+  }).optional()
 });
 
 const loginSchema = Joi.object({
@@ -74,7 +116,18 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { email, password, name, role } = value;
+    const {
+      email,
+      password,
+      name,
+      role,
+      phone,
+      profilePhoto,
+      education,
+      experience,
+      application,
+      professional
+    } = value;
 
     // Generate verification code and expiry (10 min)
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -89,8 +142,8 @@ router.post('/register', async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Create user with verification fields
-    const created = await User.create({
+    // Create user with all fields
+    const userData = {
       email,
       password: hashedPassword,
       name,
@@ -98,7 +151,21 @@ router.post('/register', async (req, res) => {
       isVerified: false,
       verificationCode,
       verificationExpires
-    });
+    };
+
+    // Add optional fields based on role
+    if (phone) userData.phone = phone;
+    if (profilePhoto) userData.profilePhoto = profilePhoto;
+
+    if (role === 'candidate') {
+      if (education) userData.education = education;
+      if (experience) userData.experience = experience;
+      if (application) userData.application = application;
+    } else if (role === 'interviewer') {
+      if (professional) userData.professional = professional;
+    }
+
+    const created = await User.create(userData);
 
     const user = {
       id: created._id.toString(),
