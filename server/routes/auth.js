@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
+const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 const { sendVerificationEmail } = require('../utils/mailer');
 const User = require('../models/User');
@@ -10,17 +11,59 @@ const router = express.Router();
 
 // Using Mongoose models, no Prisma
 
-// Validation schemas
+// Secure JWT secret validation
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('JWT_SECRET environment variable is required in production');
+    process.exit(1);
+  } else {
+    // Generate a random secret for development only
+    const devSecret = crypto.randomBytes(64).toString('hex');
+    logger.warn('JWT_SECRET not found, using generated secret for development only');
+    process.env.JWT_SECRET = devSecret;
+  }
+}
+
+// Enhanced validation schemas with stricter rules
 const registerSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
-  name: Joi.string().min(2).required(),
+  email: Joi.string().email().lowercase().trim().required().messages({
+    'string.email': 'Please provide a valid email address',
+    'string.empty': 'Email is required'
+  }),
+  password: Joi.string()
+    .min(8)
+    .max(128)
+    .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]'))
+    .required()
+    .messages({
+      'string.min': 'Password must be at least 8 characters long',
+      'string.max': 'Password must not exceed 128 characters',
+      'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+    }),
+  name: Joi.string().min(2).max(50).trim().required().messages({
+    'string.min': 'Name must be at least 2 characters long',
+    'string.max': 'Name must not exceed 50 characters'
+  }),
   role: Joi.string().valid('candidate', 'interviewer', 'admin').default('candidate')
 });
 
 const loginSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().required()
+  email: Joi.string().email().lowercase().trim().required().messages({
+    'string.email': 'Please provide a valid email address'
+  }),
+  password: Joi.string().required().messages({
+    'string.empty': 'Password is required'
+  })
+});
+
+// Email verification schema
+const emailVerificationSchema = Joi.object({
+  email: Joi.string().email().lowercase().trim().required(),
+  code: Joi.string().length(6).pattern(/^[0-9]+$/).required().messages({
+    'string.length': 'Verification code must be 6 digits',
+    'string.pattern.base': 'Verification code must contain only numbers'
+  })
 });
 
 // Register new user
@@ -103,7 +146,7 @@ router.post('/login', async (req, res) => {
     // Generate JWT token
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'my_super_secret',
+      JWT_SECRET,
       { expiresIn: '7d' }
     );
 
@@ -133,7 +176,7 @@ router.get('/me', async (req, res) => {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    const decoded = jwt.verify(token, JWT_SECRET);
     
     const userDoc = await User.findById(decoded.userId).select('email name role createdAt');
     const user = userDoc ? { id: userDoc._id.toString(), email: userDoc.email, name: userDoc.name, role: userDoc.role, createdAt: userDoc.createdAt } : null;
@@ -151,11 +194,14 @@ router.get('/me', async (req, res) => {
 
 // Email verification route
 router.post('/verify-email', async (req, res) => {
-  const { email, code } = req.body;
-  if (!email || !code) {
-    return res.status(400).json({ error: 'Email and code are required' });
-  }
   try {
+    const { error, value } = emailVerificationSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const { email, code } = value;
+
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });

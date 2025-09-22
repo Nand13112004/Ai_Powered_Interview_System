@@ -1,9 +1,6 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
@@ -17,42 +14,57 @@ const { setupSocketHandlers } = require('./socket/handlers');
 const { logger } = require('./utils/logger');
 const connectMongo = require('./utils/mongo');
 
+// Import security middlewares
+const { corsMiddleware } = require('./middleware/cors');
+const { securityMiddleware, apiLimiter, authLimiter } = require('./middleware/security');
+
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
-    methods: ["GET", "POST"]
-  }
-});
+
+// Environment-specific configuration
+const isProduction = process.env.NODE_ENV === 'production';
+const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
 
 // Connect to MongoDB
 connectMongo();
 
-// Security middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true
+// Apply environment-specific security middleware
+const securityConfig = securityMiddleware[isProduction ? 'production' : 'development'];
+securityConfig.forEach(middleware => app.use(middleware));
+
+// CORS configuration
+app.use(corsMiddleware);
+
+// Body parsing middleware with security limits
+app.use(express.json({
+  limit: process.env.MAX_REQUEST_SIZE || '10mb',
+  verify: (req, res, buf) => {
+    // Store raw body for signature verification if needed
+    if (req.headers['content-type']?.includes('application/json')) {
+      req.rawBody = buf;
+    }
+  }
+}));
+app.use(express.urlencoded({
+  extended: true,
+  limit: process.env.MAX_REQUEST_SIZE || '10mb'
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
-
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Logging middleware
+// Request logging middleware
 app.use((req, res, next) => {
+  const start = Date.now();
   logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
-    userAgent: req.get('User-Agent')
+    userAgent: req.get('User-Agent'),
+    origin: req.headers.origin
   });
+
+  // Log response time
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+  });
+
   next();
 });
 
@@ -69,7 +81,21 @@ app.use('/api/generate-questions', generateQuestionsRoute);
 app.use('/api/answers', answersRouter);
 app.use('/api/responses', responsesRouter);
 
-// Socket.IO connection handling
+// Socket.IO connection handling with enhanced security
+const io = socketIo(server, {
+  cors: {
+    origin: clientUrl,
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  maxHttpBufferSize: 1e6, // 1MB
+  connectTimeout: 45000,
+  pingTimeout: 30000,
+  pingInterval: 25000
+});
+
 setupSocketHandlers(io);
 
 // Error handling middleware
