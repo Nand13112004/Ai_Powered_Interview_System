@@ -23,7 +23,7 @@ export default function RegisterPage() {
     name: '',
     email: '',
     phone: '',
-    profilePhoto: '',
+    profilePhoto: '' as string | File | null,
     password: '',
     confirmPassword: ''
   })
@@ -54,7 +54,7 @@ export default function RegisterPage() {
     name: '',
     email: '',
     phone: '',
-    profilePhoto: null as File | null,
+    profilePhoto: '' as string | File | null,
     password: '',
     confirmPassword: ''
   })
@@ -440,6 +440,16 @@ export default function RegisterPage() {
                 <div className="space-y-2">
                   <Label htmlFor="int-photo">Profile Photo</Label>
                   <Input id="int-photo" type="file" accept="image/*" onChange={(e) => setInterviewerPersonal({ ...interviewerPersonal, profilePhoto: e.target.files?.[0] || null })} />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="int-pass">Password</Label>
+                    <Input id="int-pass" type="password" value={interviewerPersonal.password} onChange={(e) => setInterviewerPersonal({ ...interviewerPersonal, password: e.target.value })} placeholder="Create a password" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="int-cpass">Confirm Password</Label>
+                    <Input id="int-cpass" type="password" value={interviewerPersonal.confirmPassword} onChange={(e) => setInterviewerPersonal({ ...interviewerPersonal, confirmPassword: e.target.value })} placeholder="Confirm password" />
+                  </div>
                 </div>
                 <div className="flex justify-between">
                   <Button variant="outline" onClick={goBack}>Back</Button>
