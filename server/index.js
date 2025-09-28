@@ -98,6 +98,41 @@ const io = socketIo(server, {
 
 setupSocketHandlers(io);
 
+// Proctoring namespace (no auth required for external Python script)
+const proctorIo = io.of('/proctor');
+const ProctorEvent = require('./models/ProctorEvent');
+const Session = require('./models/Session');
+
+proctorIo.on('connection', (socket) => {
+  logger.info('Proctor client connected:', socket.id);
+
+  socket.on('proctor_event', async (payload) => {
+    try {
+      const { sessionId, type, meta, at } = payload || {}
+      logger.info(`Proctor event: ${type} for session ${sessionId}`, { meta, at })
+      if (sessionId) {
+        // Validate sessionId exists
+        const session = await Session.findById(sessionId);
+        if (!session) {
+          logger.warn('Invalid sessionId for proctor event:', sessionId);
+          return;
+        }
+        try {
+          await ProctorEvent.create({ sessionId, type, metadata: meta ? JSON.stringify(meta) : '{}', createdAt: at ? new Date(at) : new Date() });
+        } catch (dbErr) {
+          logger.warn('Proctor event DB save failed:', dbErr.message)
+        }
+      }
+    } catch (err) {
+      logger.error('Error handling proctor_event:', err)
+    }
+  });
+
+  socket.on('disconnect', () => {
+    logger.info('Proctor client disconnected:', socket.id);
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);

@@ -71,6 +71,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [incidentCount, setIncidentCount] = useState(0)
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
+  const [pythonCommand, setPythonCommand] = useState<string | null>(null)
   const INCIDENT_THRESHOLD = 5
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -221,7 +222,16 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       // If too many incidents, auto-complete
       setTimeout(() => {
         if (STRICT_MODE && fatalIncidents.has(type)) {
-          toast.error('Strict violation detected. Ending interview.')
+          toast.error('🚨 STRICT VIOLATION DETECTED! Ending interview immediately.', {
+            duration: 8000,
+            style: {
+              background: '#fee2e2',
+              color: '#dc2626',
+              border: '3px solid #ef4444',
+              fontSize: '18px',
+              fontWeight: 'bold'
+            }
+          });
           emitWhenConnected('proctor_threshold_breach', {
             sessionId,
             incidents: incidentCount + 1,
@@ -231,7 +241,16 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
           return
         }
         if (!isCompleted && (incidentCount + 1 >= INCIDENT_THRESHOLD)) {
-          toast.error('Too many proctoring incidents. Ending interview.')
+          toast.error('🚨 TOO MANY INCIDENTS! Interview terminated due to multiple violations.', {
+            duration: 8000,
+            style: {
+              background: '#fee2e2',
+              color: '#dc2626',
+              border: '3px solid #ef4444',
+              fontSize: '18px',
+              fontWeight: 'bold'
+            }
+          });
           emitWhenConnected('proctor_threshold_breach', {
             sessionId,
             incidents: incidentCount + 1
@@ -639,6 +658,9 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
           text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
           timestamp: new Date()
         }])
+        // Set Python command for cheating detection
+        const serverUrl = window.location.origin
+        setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
         // Scroll to bottom after setting messages
         setTimeout(() => {
           const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
@@ -1324,6 +1346,27 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
                 )}
               </div>
             </div>
+
+            {/* Python Cheating Detection */}
+            {pythonCommand && (
+              <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cheating Detection (Python)</h3>
+                <div className="bg-gray-50 rounded-xl p-4 mb-4">
+                  <p className="text-sm text-gray-700 mb-2">For enhanced proctoring, run this command in your terminal:</p>
+                  <div className="bg-black text-green-400 rounded-lg p-3 font-mono text-xs overflow-x-auto">
+                    <code>{pythonCommand}</code>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    This will monitor your webcam for cheating behaviors (looking away, objects like phones). 
+                    Ensure dependencies are installed: <code>pip install opencv-python mediapipe ultralytics python-socketio</code>.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center text-xs text-blue-600">
+                  <AlertCircle className="h-4 w-4 mr-1" />
+                  <span>Browser-based detection is active as fallback.</span>
+                </div>
+              </div>
+            )}
 
             {/* Interview Details */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
