@@ -221,7 +221,7 @@ export default function CreateInterview() {
                     onClick={generateQuestions}
                     disabled={!role || !level || loading}
                   >
-                    {loading ? "Generating..." : "Generate with Gemini"}
+                    {loading ? "Generating..." : "Generate with AI"}
                   </Button>
                 </div>
               </div>

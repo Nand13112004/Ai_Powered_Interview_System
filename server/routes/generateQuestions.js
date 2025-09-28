@@ -16,7 +16,7 @@ router.post('/', async (req, res) => {
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = `Generate 5 concise interview questions for a ${level} ${role}. Return only the questions as a simple list, no explanations.`;
     const result = await model.generateContent(prompt);
     const response = await result.response;
