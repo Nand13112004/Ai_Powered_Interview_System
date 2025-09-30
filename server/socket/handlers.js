@@ -172,20 +172,42 @@ const setupSocketHandlers = (io) => {
 
     // Proctoring: receive client incidents
     socket.on('proctor_event', async (payload) => {
+  try {
+    const { sessionId, type, meta, at } = payload || {};
+    logger.info(`Proctor event: ${type} for session ${sessionId} by ${socket.user?.email}`, { meta, at });
+
+    if (sessionId) {
+      // Save to DB
       try {
-        const { sessionId, type, meta, at } = payload || {}
-        logger.info(`Proctor event: ${type} for session ${sessionId} by ${socket.user?.email}`, { meta, at })
-        if (sessionId) {
-          try {
-            await ProctorEvent.create({ sessionId, type, metadata: meta ? JSON.stringify(meta) : '{}', createdAt: at ? new Date(at) : new Date() });
-          } catch (dbErr) {
-            logger.warn('Proctor event DB save failed:', dbErr.message)
-          }
-        }
-      } catch (err) {
-        logger.error('Error handling proctor_event:', err)
+        await ProctorEvent.create({
+          sessionId,
+          type,
+          metadata: typeof meta === 'string' ? meta : JSON.stringify(meta || {}),
+          createdAt: at ? new Date(at) : new Date()
+        });
+      } catch (dbErr) {
+        logger.warn('Proctor event DB save failed:', dbErr.message);
       }
-    })
+
+      // Prepare meta for emitting
+      let metaForEmit = {};
+      if (typeof meta === 'string') {
+        try {
+          metaForEmit = JSON.parse(meta);
+        } catch (err) {
+          metaForEmit = {};
+        }
+      } else if (typeof meta === 'object' && meta !== null) {
+        metaForEmit = meta;
+      }
+
+      // Relay to clients
+      io.to(`interview_${sessionId}`).emit('proctor_detection', { type, meta: metaForEmit, at });
+    }
+  } catch (err) {
+    logger.error('Error handling proctor_event:', err);
+  }
+});
 
     // Proctoring: threshold breach
     socket.on('proctor_threshold_breach', async (payload) => {

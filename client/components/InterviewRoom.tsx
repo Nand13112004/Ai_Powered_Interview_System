@@ -69,6 +69,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [elapsedTime, setElapsedTime] = useState(0)
   const [isCompleted, setIsCompleted] = useState(false)
   const [incidentCount, setIncidentCount] = useState(0)
+  const [incidents, setIncidents] = useState<Array<{type: string, meta: any, timestamp: Date}>>([])
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
   const [pythonCommand, setPythonCommand] = useState<string | null>(null)
@@ -648,7 +649,7 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       setIsConnected(true)
       console.log('✅ Socket connection initialized successfully')
 
-      socketService.on('interview_joined', (data: { sessionId: string }) => {
+      socketService.on('interview_joined', async (data: { sessionId: string }) => {
         console.log('✅ Interview joined successfully:', data)
         setSessionId(data.sessionId)
         setCurrentQuestionIndex(0)
@@ -658,9 +659,34 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
           text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
           timestamp: new Date()
         }])
-        // Set Python command for cheating detection
-        const serverUrl = window.location.origin
-        setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
+        // Automatically launch Python cheating detection script
+        const serverUrl = 'http://localhost:5000' // Server URL for Python script to connect to /proctor namespace
+        try {
+          const response = await fetch('http://localhost:3001/run-python', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              sessionId: data.sessionId,
+              serverUrl: serverUrl
+            }),
+          })
+          if (response.ok) {
+            console.log('✅ Python cheating detection script launched successfully')
+            toast.success('Cheating detection activated')
+          } else {
+            console.error('❌ Failed to launch Python script:', response.statusText)
+            toast.error('Failed to activate cheating detection. Please run the command manually.')
+            // Fallback: set the command for manual execution
+            setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
+          }
+        } catch (error) {
+          console.error('❌ Error launching Python script:', error)
+          toast.error('Failed to activate cheating detection. Please run the command manually.')
+          // Fallback: set the command for manual execution
+          setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
+        }
         // Scroll to bottom after setting messages
         setTimeout(() => {
           const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
@@ -693,6 +719,20 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
       socketService.on('ai_audio', (data: { audioData: string }) => {
         playAudio(data.audioData)
+      })
+
+      socketService.on('proctor_detection', (data: { type: string, meta: any, at: number }) => {
+        const incident = {
+          type: data.type,
+          meta: data.meta,
+          timestamp: new Date(data.at * 1000)
+        }
+        setIncidents(prev => {
+          const newIncidents = [...prev, incident]
+          return newIncidents.length > 10 ? newIncidents.slice(-10) : newIncidents
+        })
+        setIncidentCount(prev => prev + 1)
+        console.log('Proctor detection received:', data)
       })
 
       socketService.on('interview_completed', (data: any) => {
@@ -1348,25 +1388,33 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
             </div>
 
             {/* Python Cheating Detection */}
-            {pythonCommand && (
-              <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cheating Detection (Python)</h3>
-                <div className="bg-gray-50 rounded-xl p-4 mb-4">
-                  <p className="text-sm text-gray-700 mb-2">For enhanced proctoring, run this command in your terminal:</p>
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Cheating Detection (Python)</h3>
+              <div className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200">
+                <div className="flex items-center justify-center space-x-2 mb-2">
+                  <CheckCircle className="h-5 w-5 text-green-600" />
+                  <span className="text-sm font-medium text-green-800">Automatic Launch Active</span>
+                </div>
+                <p className="text-xs text-green-700 text-center">
+                  Python cheating detection script is launched automatically when entering the interview room.
+                </p>
+              </div>
+              {pythonCommand && (
+                <div className="bg-yellow-50 rounded-xl p-4 mb-4 border border-yellow-200">
+                  <p className="text-sm text-yellow-700 mb-2">Fallback: If automatic launch fails, run this command manually:</p>
                   <div className="bg-black text-green-400 rounded-lg p-3 font-mono text-xs overflow-x-auto">
                     <code>{pythonCommand}</code>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">
-                    This will monitor your webcam for cheating behaviors (looking away, objects like phones). 
+                  <p className="text-xs text-yellow-600 mt-2">
                     Ensure dependencies are installed: <code>pip install opencv-python mediapipe ultralytics python-socketio</code>.
                   </p>
                 </div>
-                <div className="flex items-center justify-center text-xs text-blue-600">
-                  <AlertCircle className="h-4 w-4 mr-1" />
-                  <span>Browser-based detection is active as fallback.</span>
-                </div>
+              )}
+              <div className="flex items-center justify-center text-xs text-blue-600">
+                <AlertCircle className="h-4 w-4 mr-1" />
+                <span>Browser-based detection is active as fallback.</span>
               </div>
-            )}
+            </div>
 
             {/* Interview Details */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
