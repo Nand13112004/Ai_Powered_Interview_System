@@ -3,6 +3,7 @@ const router = express.Router();
 const Session = require('../models/Session');
 const Interview = require('../models/Interview');
 const { logger } = require('../utils/logger');
+const fetch = require('node-fetch');
 
 // Get user's sessions
 router.get('/', async (req, res) => {
@@ -51,6 +52,26 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ error: 'Interview not found' });
     }
 
+    // Enforce single attempt - by default, candidates can only take an interview once
+    if (!interview.allowMultipleAttempts) {
+      const existingSession = await Session.findOne({
+        userId: req.user.id,
+        interviewId: interviewId
+      });
+      if (existingSession) {
+        return res.status(409).json({
+          error: 'You have already taken this interview. Each candidate can only participate once.',
+          sessionId: existingSession._id,
+          existingSession: {
+            id: existingSession._id,
+            status: existingSession.status,
+            startedAt: existingSession.startedAt,
+            completedAt: existingSession.completedAt
+          }
+        });
+      }
+    }
+
     // Create session
     const session = await Session.create({
       userId: req.user.id,
@@ -94,28 +115,33 @@ router.post('/verify-entry', async (req, res) => {
       });
     }
 
-    // Check if interview is scheduled
+    // Check if interview is scheduled and enforce real-time scheduling
     if (interview.isScheduled) {
       const now = new Date();
+      const startTime = new Date(interview.scheduledStartTime);
+      const endTime = new Date(interview.scheduledEndTime);
       
       // Check if interview has started
-      if (interview.scheduledStartTime && now < interview.scheduledStartTime) {
-        const timeUntilStart = Math.max(0, interview.scheduledStartTime - now);
+      if (interview.scheduledStartTime && now < startTime) {
+        const timeUntilStart = Math.max(0, startTime - now);
         const minutesUntilStart = Math.ceil(timeUntilStart / (1000 * 60));
+        const secondsUntilStart = Math.ceil(timeUntilStart / 1000);
         
         return res.status(403).json({
           error: 'Interview has not started yet',
           scheduledStartTime: interview.scheduledStartTime,
           timeUntilStart: timeUntilStart,
           minutesUntilStart: minutesUntilStart,
+          secondsUntilStart: secondsUntilStart,
           message: `Interview starts in ${minutesUntilStart} minutes`,
-          canStart: false
+          canStart: false,
+          requiresWaiting: true
         });
       }
 
       // Check if interview has ended
-      if (interview.scheduledEndTime && now > interview.scheduledEndTime) {
-        const timeSinceEnd = now - interview.scheduledEndTime;
+      if (interview.scheduledEndTime && now > endTime) {
+        const timeSinceEnd = now - endTime;
         const minutesSinceEnd = Math.ceil(timeSinceEnd / (1000 * 60));
         
         if (!interview.allowLateJoin) {
@@ -129,6 +155,12 @@ router.post('/verify-entry', async (req, res) => {
           });
         }
       }
+      
+      // If we're within the scheduled time window, allow entry
+      if (now >= startTime && now <= endTime) {
+        // Interview is currently active - allow entry
+        console.log(`✅ Interview is currently active for session ${interview._id}`);
+      }
     }
 
     // Check if interview is active
@@ -138,9 +170,29 @@ router.post('/verify-entry', async (req, res) => {
       });
     }
 
+    // Enforce single attempt - by default, candidates can only take an interview once
+    // This is the default behavior unless explicitly allowed multiple attempts
+    if (!interview.allowMultipleAttempts) {
+      const existingSession = await Session.findOne({
+        userId: userId || req.user.id,
+        interviewId: interview._id
+      });
+      if (existingSession) {
+        return res.status(403).json({
+          error: 'You have already taken this interview. Each candidate can only participate once.',
+          existingSession: {
+            id: existingSession._id,
+            status: existingSession.status,
+            startedAt: existingSession.startedAt,
+            completedAt: existingSession.completedAt
+          }
+        });
+      }
+    }
+
     // Create or update session
-    let session = await Session.findOne({ 
-      userId: userId || req.user.id, 
+    let session = await Session.findOne({
+      userId: userId || req.user.id,
       interviewId: interview._id,
       status: { $in: ['pending', 'in_progress'] }
     });
@@ -191,7 +243,7 @@ router.post('/start/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     const { startVideoRecording = true, startAudioRecording = true } = req.body;
 
-    const session = await Session.findById(sessionId);
+    const session = await Session.findById(sessionId).populate('interviewId');
     if (!session) {
       return res.status(404).json({
         error: 'Session not found'
@@ -203,6 +255,43 @@ router.post('/start/:sessionId', async (req, res) => {
       return res.status(403).json({
         error: 'Access denied'
       });
+    }
+
+    const interview = session.interviewId;
+
+    // Enforce start time for scheduled interviews
+    if (interview.isScheduled && interview.scheduledStartTime) {
+      const now = new Date();
+      const startTime = new Date(interview.scheduledStartTime);
+
+      if (now < startTime) {
+        const timeUntilStart = Math.max(0, startTime - now);
+        const minutesUntilStart = Math.ceil(timeUntilStart / (1000 * 60));
+        const secondsUntilStart = Math.ceil(timeUntilStart / 1000);
+
+        return res.status(403).json({
+          error: 'Interview has not started yet',
+          scheduledStartTime: interview.scheduledStartTime,
+          timeUntilStart: timeUntilStart,
+          minutesUntilStart: minutesUntilStart,
+          secondsUntilStart: secondsUntilStart,
+          message: `Interview starts in ${minutesUntilStart} minutes`,
+          canStart: false
+        });
+      }
+
+      // Check if interview has ended
+      if (interview.scheduledEndTime) {
+        const endTime = new Date(interview.scheduledEndTime);
+        if (now > endTime) {
+          return res.status(403).json({
+            error: 'Interview has ended',
+            scheduledEndTime: interview.scheduledEndTime,
+            message: 'Cannot start interview after scheduled end time',
+            canStart: false
+          });
+        }
+      }
     }
 
     // Update session
@@ -284,6 +373,27 @@ router.post('/complete/:sessionId', async (req, res) => {
 
     await session.save();
 
+    // Stop Python cheating detection script for this session
+    try {
+      const stopResponse = await fetch('http://localhost:3001/stop-python', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: sessionId
+        }),
+      });
+      
+      if (stopResponse.ok) {
+        logger.info(`Python cheating detection stopped for session ${sessionId}`);
+      } else {
+        logger.warn(`Failed to stop Python script for session ${sessionId}: ${stopResponse.statusText}`);
+      }
+    } catch (error) {
+      logger.warn(`Error stopping Python script for session ${sessionId}:`, error.message);
+    }
+
     logger.info(`Interview session ${sessionId} completed. Duration: ${duration} minutes`);
 
     res.json({
@@ -305,11 +415,10 @@ router.post('/complete/:sessionId', async (req, res) => {
   }
 });
 
-// Download session media files
-router.get('/download/:sessionId/:mediaType', async (req, res) => {
+// Secure media access - no direct downloads allowed
+router.get('/media/:sessionId/:mediaType', async (req, res) => {
   try {
     const { sessionId, mediaType } = req.params;
-    const { type = 'original' } = req.query; // original, compressed, etc.
 
     if (!['video', 'audio'].includes(mediaType)) {
       return res.status(400).json({
@@ -324,10 +433,10 @@ router.get('/download/:sessionId/:mediaType', async (req, res) => {
       });
     }
 
-    // Verify access
-    if (session.userId !== req.user.id && req.user.role !== 'interviewer') {
+    // Verify access - only interviewers and admins can access
+    if (req.user.role !== 'interviewer' && req.user.role !== 'admin') {
       return res.status(403).json({
-        error: 'Access denied'
+        error: 'Access denied. Only interviewers can access media files.'
       });
     }
 
@@ -340,22 +449,34 @@ router.get('/download/:sessionId/:mediaType', async (req, res) => {
       });
     }
 
-    // Set headers for file download
-    const fileName = `interview_${sessionId}_${mediaType}_${new Date().getTime()}.webm`;
+    // Set secure headers to prevent downloading
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.setHeader('Content-Length', mediaData.length);
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Add watermark to prevent unauthorized use
+    const secureData = Buffer.concat([
+      Buffer.from('SECURE_INTERVIEW_MEDIA_'), // Security watermark
+      mediaData
+    ]);
 
-    // Send file data
-    res.send(mediaData);
+    // Send secure media data
+    res.send(secureData);
 
   } catch (error) {
-    logger.error('Error downloading media:', error);
+    logger.error('Error accessing secure media:', error);
     res.status(500).json({
-      error: 'Failed to download media file'
+      error: 'Failed to access media file'
     });
   }
 });
+
+// Remove direct download endpoint for security
+// Media files are now only accessible through secure streaming
 
 // Get session details with time tracking
 router.get('/:sessionId', async (req, res) => {

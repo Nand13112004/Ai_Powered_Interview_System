@@ -25,7 +25,8 @@ const createInterviewSchema = Joi.object({
   scheduledStartTime: Joi.date().allow(null).optional(),
   scheduledEndTime: Joi.date().allow(null).optional(),
   timeZone: Joi.string().optional(),
-  requiresSchedule: Joi.boolean().optional()
+  requiresSchedule: Joi.boolean().optional(),
+  allowMultipleAttempts: Joi.boolean().optional()
 }).unknown(true); // Allow unknown fields
 
 // ✅ Get all interviews
@@ -158,7 +159,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { title, description, role, level, duration, questions, password, isScheduled, scheduledStartTime, scheduledEndTime, timeZone, requiresSchedule } = value;
+    const { title, description, role, level, duration, questions, password, isScheduled, scheduledStartTime, scheduledEndTime, timeZone, requiresSchedule, allowMultipleAttempts } = value;
 
     // Generate random code: A-Z, a-z, 0-9, length 8
     function generateRandomCode(length = 8) {
@@ -193,6 +194,7 @@ router.post("/", async (req, res) => {
       scheduledEndTime: scheduledEndTime || null,
       timeZone: timeZone || 'UTC',
       requiresSchedule: requiresSchedule || false,
+      allowMultipleAttempts: allowMultipleAttempts || false,
     });
     const questionDocs = await Question.insertMany(questions.map((q, i) => ({
       text: q,

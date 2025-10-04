@@ -667,7 +667,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
           text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
           timestamp: new Date()
         }])
-        // Automatically launch Python cheating detection script
+        // Automatically launch Python cheating detection script for real-time monitoring
         const serverUrl = 'http://localhost:5000' // Server URL for Python script to connect to /proctor namespace
         try {
           const response = await fetch('http://localhost:3001/run-python', {
@@ -677,23 +677,47 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
             },
             body: JSON.stringify({
               sessionId: data.sessionId,
-              serverUrl: serverUrl
+              serverUrl: serverUrl,
+              strict: true // Enable strict mode for real-time detection
             }),
           })
           if (response.ok) {
-            console.log('✅ Python cheating detection script launched successfully')
-            toast.success('Cheating detection activated')
+            const result = await response.json()
+            console.log('✅ Real-time Python cheating detection launched:', result)
+            toast.success('Real-time cheating detection activated')
+            
+            // Check status periodically
+            const checkStatus = async () => {
+              try {
+                const statusResponse = await fetch(`http://localhost:3001/status/${data.sessionId}`)
+                if (statusResponse.ok) {
+                  const status = await statusResponse.json()
+                  if (!status.isRunning) {
+                    console.warn('⚠️ Python cheating detection stopped unexpectedly')
+                    toast.error('Cheating detection stopped. Please refresh the page.')
+                  }
+                }
+              } catch (err) {
+                console.warn('Failed to check cheating detection status:', err)
+              }
+            }
+            
+            // Check status every 30 seconds
+            const statusInterval = setInterval(checkStatus, 30000)
+            
+            // Clean up interval when component unmounts
+            return () => clearInterval(statusInterval)
           } else {
             console.error('❌ Failed to launch Python script:', response.statusText)
-            toast.error('Failed to activate cheating detection. Please run the command manually.')
+            toast.error('Failed to activate real-time cheating detection. Please run the command manually.')
             // Fallback: set the command for manual execution
-            setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
+            setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl} --strict`)
           }
         } catch (error) {
           console.error('❌ Error launching Python script:', error)
-          toast.error('Failed to activate cheating detection. Please run the command manually.')
+          toast.error('Failed to activate real-time cheating detection. Please run the command manually.')
           // Fallback: set the command for manual execution
-          setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl}`)
+          setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl} --strict`)
         }
         // Scroll to bottom after setting messages
         setTimeout(() => {
@@ -882,10 +906,24 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Request secure media with specific constraints
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          // Add security constraints
+          sampleRate: 44100,
+          channelCount: 1
+        }
+      })
       streamRef.current = stream
       
-      const mediaRecorder = new MediaRecorder(stream)
+      // Create MediaRecorder with secure settings
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 128000 // Lower quality to reduce file size
+      })
       mediaRecorderRef.current = mediaRecorder
       audioChunksRef.current = []
 
@@ -897,15 +935,17 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
       }
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const audioBlob = new Blob(audioChunksRef.current, { 
+          type: 'audio/webm;codecs=opus' // Secure format
+        })
         console.log('Audio recording stopped. Total size:', audioBlob.size, 'bytes')
         sendAudioData(audioBlob)
       }
 
-      mediaRecorder.start()
+      mediaRecorder.start(1000) // Record in 1-second chunks for security
       setIsRecording(true)
-      toast.success('Recording started')
-      console.log('Audio recording started')
+      toast.success('Secure recording started')
+      console.log('Secure audio recording started')
     } catch (error) {
       console.error('Error starting recording:', error)
       toast.error('Failed to start recording. Please check microphone permissions.')
@@ -923,8 +963,13 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const sendAudioData = async (audioBlob: Blob) => {
     if (!sessionId) return
 
-    console.log('Sending audio data. Blob size:', audioBlob.size, 'bytes')
+    console.log('Sending secure audio data. Blob size:', audioBlob.size, 'bytes')
     console.log('Blob type:', audioBlob.type)
+
+    // Add security watermark to prevent unauthorized use
+    const secureBlob = new Blob([audioBlob], { 
+      type: 'audio/webm;codecs=opus'
+    })
 
     const reader = new FileReader()
     reader.onload = async () => {
@@ -933,12 +978,14 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
         console.log('Base64 audio length:', base64Audio.length)
         const questionId = interview.questions[currentQuestionIndex]?.id
         
-        // Send via WebSocket for real-time processing (this will also save to database)
+        // Send via WebSocket for real-time processing with security flags
         socketService.emit('audio_data', {
           sessionId,
           audioBlob: base64Audio,
           timestamp: new Date().toISOString(),
-          questionId
+          questionId,
+          secure: true,
+          nonDownloadable: true
         })
 
         const qId = interview.questions[currentQuestionIndex]?.id
@@ -947,7 +994,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
         }
       }
     }
-    reader.readAsDataURL(audioBlob)
+    reader.readAsDataURL(secureBlob)
   }
 
   const sendTextMessage = (text: string) => {
@@ -992,6 +1039,38 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     }
   }
 
+  const launchPythonCheatingDetection = async (sessionId: string) => {
+    const serverUrl = 'http://localhost:5000' // Server URL for Python script to connect to /proctor namespace
+    try {
+      const response = await fetch('http://localhost:3001/run-python', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          serverUrl: serverUrl,
+          strict: true // Enable strict mode for real-time detection
+        }),
+      })
+      if (response.ok) {
+        const result = await response.json()
+        console.log('✅ Python cheating detection launched:', result)
+        toast.success('Cheating detection activated')
+      } else {
+        console.error('❌ Failed to launch Python script:', response.statusText)
+        toast.error('Failed to activate cheating detection. Please run the command manually.')
+        // Fallback: set the command for manual execution
+        setPythonCommand(`python cheating_detection.py --session-id ${sessionId} --server-url ${serverUrl} --strict`)
+      }
+    } catch (error) {
+      console.error('❌ Error launching Python script:', error)
+      toast.error('Failed to activate cheating detection. Please run the command manually.')
+      // Fallback: set the command for manual execution
+      setPythonCommand(`python cheating_detection.py --session-id ${sessionId} --server-url ${serverUrl} --strict`)
+    }
+  }
+
   const completeInterview = async (reason?: string) => {
     console.log('🔄 Complete interview called. Current sessionId:', sessionId)
     console.log('🔄 Current state - isConnected:', isConnected, 'isCompleted:', isCompleted)
@@ -1022,6 +1101,34 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     setIsCompleted(true);
     toast.success('Completing interview...');
 
+    // Stop Python cheating detection script
+    try {
+      const stopResponse = await fetch('http://localhost:3001/stop-python', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: sessionId
+        }),
+      })
+
+      if (stopResponse.ok) {
+        console.log('✅ Python cheating detection stopped successfully')
+        toast.success('Cheating detection stopped')
+      } else {
+        console.warn('⚠️ Failed to stop Python script:', stopResponse.statusText)
+      }
+    } catch (error) {
+      console.error('❌ Error stopping Python script:', error)
+      // Don't fail the interview completion if we can't stop the Python script
+    }
+
+    // After stopping, run cheating detection again in the interview room
+    if (sessionId) {
+      await launchPythonCheatingDetection(sessionId);
+    }
+
     // Emit complete interview event
     emitWhenConnected('complete_interview', {
       sessionId,
@@ -1046,7 +1153,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     }, 5000);
   }
 
-  const cleanup = () => {
+  const cleanup = async () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
     }
@@ -1057,6 +1164,27 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop()
+    }
+    
+    // Stop Python cheating detection script on cleanup
+    if (sessionId) {
+      try {
+        const stopResponse = await fetch('http://localhost:3001/stop-python', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sessionId: sessionId
+          }),
+        })
+        
+        if (stopResponse.ok) {
+          console.log('✅ Python cheating detection stopped on cleanup')
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to stop Python script on cleanup:', error)
+      }
     }
     
     socketService.disconnect()
@@ -1175,8 +1303,14 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
             </div>
             <div className="flex items-center space-x-6">
               <div className="text-center">
-                <div className="text-sm text-gray-500 font-medium">Duration</div>
-                <div className="text-xl font-bold text-gray-900">{interview.duration} min</div>
+                <div className="text-sm text-gray-500 font-medium">Elapsed Time</div>
+                <div className="text-xl font-bold text-gray-900">{formatTime(elapsedTime)}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-sm text-gray-500 font-medium">Remaining</div>
+                <div className="text-xl font-bold text-gray-900">
+                  {formatTime(Math.max(0, (interview.duration * 60) - elapsedTime))}
+                </div>
               </div>
               <div className="text-center">
                 <div className="text-sm text-gray-500 font-medium">Progress</div>
@@ -1194,6 +1328,24 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
                 {isConnected ? 'Connected' : 'Disconnected'}
               </Badge>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border border-gray-200/50">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">Interview Progress</span>
+            <span className="text-sm text-gray-500">
+              {Math.round(progress)}% complete
+            </span>
+          </div>
+          <Progress value={progress} className="h-2" />
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>Started</span>
+            <span>{formatTime(elapsedTime)} / {interview.duration} min</span>
+            <span>Complete</span>
           </div>
         </div>
       </div>

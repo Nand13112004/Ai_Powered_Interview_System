@@ -13,10 +13,10 @@ app.use(express.json());
 const runningProcesses = {}; // { sessionId: pythonProcess }
 
 // -------------------
-// Launch Python script
+// Launch Python script for real-time cheating detection
 // -------------------
 app.post('/run-python', (req, res) => {
-  const { sessionId, serverUrl, strict } = req.body;
+  const { sessionId, serverUrl, strict = true } = req.body;
 
   if (!sessionId || !serverUrl) {
     return res.status(400).json({ error: 'Missing sessionId or serverUrl' });
@@ -27,33 +27,42 @@ app.post('/run-python', (req, res) => {
     return res.status(400).json({ error: 'Cheating detection already running for this session' });
   }
 
-  console.log(`🚀 Launching Python cheating detection script for session: ${sessionId}`);
+  console.log(`🚀 Launching real-time Python cheating detection for session: ${sessionId}`);
 
   const args = ['cheating_detection.py', '--session-id', sessionId, '--server-url', serverUrl];
   if (strict) args.push('--strict');
 
-  const pythonProcess = spawn('python', args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-
-  // Capture stdout
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`[Python stdout][${sessionId}]: ${data.toString()}`);
+  const pythonProcess = spawn('python', args, { 
+    stdio: ['ignore', 'pipe', 'pipe'], 
+    detached: true,
+    env: { ...process.env, PYTHONUNBUFFERED: '1' } // Ensure real-time output
   });
 
-  // Capture stderr
+  // Capture stdout for real-time monitoring
+  pythonProcess.stdout.on('data', (data) => {
+    const output = data.toString().trim();
+    if (output) {
+      console.log(`[Python stdout][${sessionId}]: ${output}`);
+    }
+  });
+
+  // Capture stderr for error monitoring
   pythonProcess.stderr.on('data', (data) => {
-    console.error(`[Python stderr][${sessionId}]: ${data.toString()}`);
+    const error = data.toString().trim();
+    if (error) {
+      console.error(`[Python stderr][${sessionId}]: ${error}`);
+    }
   });
 
   // Handle process exit
   pythonProcess.on('close', (code) => {
-    console.log(`❌ Python process for session ${sessionId} exited with code ${code}`);
+    console.log(`❌ Python cheating detection for session ${sessionId} exited with code ${code}`);
     delete runningProcesses[sessionId];
     
-    // If process exited due to cheating detection (code 0 is normal exit)
     if (code === 0) {
-      console.log(`✅ Python cheating detection process completed normally for session ${sessionId}`);
+      console.log(`✅ Python cheating detection completed normally for session ${sessionId}`);
     } else {
-      console.log(`⚠️ Python cheating detection process exited with error code ${code} for session ${sessionId}`);
+      console.log(`⚠️ Python cheating detection exited with error code ${code} for session ${sessionId}`);
     }
   });
 
@@ -62,11 +71,19 @@ app.post('/run-python', (req, res) => {
     delete runningProcesses[sessionId];
   });
 
-  // Detach process
+  // Detach process to run independently
   pythonProcess.unref();
-  runningProcesses[sessionId] = pythonProcess;
+  runningProcesses[sessionId] = {
+    process: pythonProcess,
+    startTime: Date.now(),
+    pid: pythonProcess.pid
+  };
 
-  res.json({ message: 'Python cheating detection script launched successfully', sessionId });
+  res.json({ 
+    message: 'Real-time Python cheating detection launched successfully', 
+    sessionId,
+    status: 'running'
+  });
 });
 
 // -------------------
@@ -75,17 +92,103 @@ app.post('/run-python', (req, res) => {
 app.post('/stop-python', (req, res) => {
   const { sessionId } = req.body;
 
-  const pythonProcess = runningProcesses[sessionId];
-  if (!pythonProcess) {
+  const processInfo = runningProcesses[sessionId];
+  if (!processInfo) {
     return res.status(404).json({ error: 'No running script for this session' });
   }
 
-  pythonProcess.kill();
+  // Try graceful shutdown first
+  processInfo.process.kill('SIGTERM');
+  
+  // Force kill after 5 seconds if still running
+  setTimeout(() => {
+    if (runningProcesses[sessionId]) {
+      console.log(`🔨 Force killing Python process for session: ${sessionId}`);
+      processInfo.process.kill('SIGKILL');
+    }
+  }, 5000);
+
   delete runningProcesses[sessionId];
-  console.log(`🛑 Stopped Python script for session: ${sessionId}`);
+  console.log(`🛑 Stopped Python cheating detection for session: ${sessionId}`);
 
   res.json({ message: 'Python cheating detection script stopped', sessionId });
 });
+
+// -------------------
+// Check Python script status
+// -------------------
+app.get('/status/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const isRunning = !!runningProcesses[sessionId];
+  
+  res.json({ 
+    sessionId, 
+    isRunning,
+    status: isRunning ? 'active' : 'inactive'
+  });
+});
+
+// -------------------
+// Get all running processes
+// -------------------
+app.get('/processes', (req, res) => {
+  const processes = Object.keys(runningProcesses).map(sessionId => ({
+    sessionId,
+    status: 'running',
+    pid: runningProcesses[sessionId].pid,
+    startTime: runningProcesses[sessionId].startTime,
+    runtime: Date.now() - runningProcesses[sessionId].startTime
+  }));
+  
+  res.json({ 
+    totalProcesses: processes.length,
+    processes 
+  });
+});
+
+// -------------------
+// Stop all Python processes
+// -------------------
+app.post('/stop-all', (req, res) => {
+  const sessionIds = Object.keys(runningProcesses);
+  
+  if (sessionIds.length === 0) {
+    return res.json({ message: 'No running processes to stop', stoppedCount: 0 });
+  }
+
+  sessionIds.forEach(sessionId => {
+    const processInfo = runningProcesses[sessionId];
+    if (processInfo) {
+      processInfo.process.kill('SIGTERM');
+      delete runningProcesses[sessionId];
+      console.log(`🛑 Stopped Python process for session: ${sessionId}`);
+    }
+  });
+
+  console.log(`🛑 Stopped ${sessionIds.length} Python processes`);
+  res.json({ 
+    message: `Stopped ${sessionIds.length} Python processes`,
+    stoppedCount: sessionIds.length,
+    stoppedSessions: sessionIds
+  });
+});
+
+// -------------------
+// Auto-cleanup: Stop processes that have been running too long
+// -------------------
+setInterval(() => {
+  const now = Date.now();
+  const maxRunTime = 2 * 60 * 60 * 1000; // 2 hours max runtime
+  
+  Object.keys(runningProcesses).forEach(sessionId => {
+    const processInfo = runningProcesses[sessionId];
+    if (processInfo.startTime && (now - processInfo.startTime) > maxRunTime) {
+      console.log(`🧹 Auto-stopping long-running Python process for session: ${sessionId}`);
+      processInfo.process.kill('SIGTERM');
+      delete runningProcesses[sessionId];
+    }
+  });
+}, 60000); // Check every minute
 
 // -------------------
 // Health check

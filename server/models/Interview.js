@@ -22,6 +22,7 @@ const interviewSchema = new mongoose.Schema({
   maxParticipants: { type: Number, default: 1 },
   autoStart: { type: Boolean, default: false },
   allowLateJoin: { type: Boolean, default: true },
+  allowMultipleAttempts: { type: Boolean, default: false },
   timeZone: { type: String, default: 'UTC' }
 }, { timestamps: true });
 
