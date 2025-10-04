@@ -6,9 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { User, LogOut, ClipboardList, PlusCircle } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { User, LogOut, ClipboardList, PlusCircle, Play, Download, Clock, Calendar, Key } from 'lucide-react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { toast } from 'react-hot-toast';
 
 export default function InterviewerDashboard() {
   const { user, logout } = useAuth();
@@ -18,6 +21,9 @@ export default function InterviewerDashboard() {
   const [showResponsesFor, setShowResponsesFor] = useState<string | null>(null);
   const [responses, setResponses] = useState<any[]>([]);
   const [responsesLoading, setResponsesLoading] = useState(false);
+  const [selectedInterview, setSelectedInterview] = useState<any>(null);
+  const [schedulingDialog, setSchedulingDialog] = useState(false);
+  const [scoreResults, setScoreResults] = useState<any>(null);
 
   useEffect(() => {
     fetchInterviews();
@@ -45,6 +51,58 @@ export default function InterviewerDashboard() {
       console.error('Error fetching responses:', error);
     } finally {
       setResponsesLoading(false);
+    }
+  };
+
+  const scheduleInterview = async (interviewId: string, scheduleData: any) => {
+    try {
+      const res = await api.put(`/interviews/${interviewId}`, {
+        scheduledStartTime: scheduleData.startTime,
+        scheduledEndTime: scheduleData.endTime,
+        isScheduled: true,
+        requiresSchedule: true
+      });
+      
+      toast.success('Interview scheduled successfully');
+      setSchedulingDialog(false);
+      fetchInterviews();
+    } catch (error) {
+      console.error('Error scheduling interview:', error);
+      toast.error('Failed to schedule interview');
+    }
+  };
+
+  const generateAI = async (sessionId: string) => {
+    try {
+      toast.loading('Generating AI scores...');
+      const res = await api.post('/scoring/score-session', { sessionId });
+      
+      setScoreResults(res.data.evaluation);
+      toast.success('AI scoring completed');
+    } catch (error) {
+      console.error('Error generating scores:', error);
+      toast.error('Failed to generate AI scores');
+    }
+  };
+
+  const downloadMedia = async (sessionId: string, mediaType: 'video' | 'audio') => {
+    try {
+      const res = await api.get(`/sessions/download/${sessionId}/${mediaType}`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `interview_${sessionId}_${mediaType}.webm`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      
+      toast.success(`${mediaType} download started`);
+    } catch (error) {
+      console.error(`Error downloading ${mediaType}:`, error);
+      toast.error(`Failed to download ${mediaType}`);
     }
   };
 
@@ -215,54 +273,200 @@ export default function InterviewerDashboard() {
                 ) : responses.length === 0 ? (
                   <p>No responses yet.</p>
                 ) : (
-                  <table className="min-w-full bg-white border rounded text-sm">
-                    <thead>
-                      <tr>
-                        <th className="px-3 py-2 text-left">Candidate</th>
-                        <th className="px-3 py-2 text-left">Question</th>
-                        <th className="px-3 py-2 text-left">Answer (text)</th>
-                        <th className="px-3 py-2 text-left">Audio</th>
-                        <th className="px-3 py-2 text-left">Time</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {responses.map((r, idx) => (
-                        <tr key={idx} className="border-t">
-                          <td className="px-3 py-2">{r.user?.name || r.user?.email}</td>
-                          <td className="px-3 py-2">{r.question?.number}. {r.question?.text}</td>
-                          <td className="px-3 py-2 whitespace-pre-wrap">{r.text || '-'}</td>
-                          <td className="px-3 py-2">
-                            {r.audioData ? (
-                              <div className="flex items-center space-x-2">
+                  <>
+                    <div className="mb-4 flex justify-between items-center">
+                      <h3 className="text-lg font-semibold">Interview Responses</h3>
+                      <div className="flex gap-2">
+                        <Button onClick={() => generateAI(responses[0]?.sessionId)} size="sm" variant="outline">
+                          Generate AI Scores
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => setSchedulingDialog(true)}
+                        >
+                          <Calendar className="h-4 w-4 mr-2" />
+                          Schedule Interview
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* AI Scoring Results */}
+                    {scoreResults && (
+                      <Card className="mb-4">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <ClipboardList className="h-5 w-5" />
+                            AI Scoring Results
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <div className="text-2xl font-bold text-green-600">{scoreResults.overallScore}/100</div>
+                              <div className="text-sm text-gray-600">Overall Score</div>
+                            </div>
+                            <div>
+                              <div className="text-sm">
+                                <strong>Strengths:</strong> {scoreResults.questionEvaluations[0]?.feedback?.strengths.join(', ')}
+                              </div>
+                              <div className="text-sm">
+                                <strong>Suggestions:</strong> {scoreResults.questionEvaluations[0]?.feedback?.suggestions.join(', ')}
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    <table className="min-w-full bg-white border rounded text-sm">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="px-3 py-2 text-left">Candidate</th>
+                          <th className="px-3 py-2 text-left">Question</th>
+                          <th className="px-3 py-2 text-left">Answer (text)</th>
+                          <th className="px-3 py-2 text-left">Audio</th>
+                          <th className="px-3 py-2 text-left">AI Score</th>
+                          <th className="px-3 py-2 text-left">Media</th>
+                          <th className="px-3 py-2 text-left">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {responses.map((r, idx) => (
+                          <tr key={idx} className="border-t hover:bg-gray-50">
+                            <td className="px-3 py-2">{r.user?.name || r.user?.email}</td>
+                            <td className="px-3 py-2">{r.question?.number}. {r.question?.text}</td>
+                            <td className="px-3 py-2 whitespace-pre-wrap max-w-xs">{r.text || '-'}</td>
+                            <td className="px-3 py-2">
+                              {r.audioData ? (
+                                <div className="flex items-center space-x-2">
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => playAudioBase64(r.audioData)}
+                                    className="flex items-center gap-1"
+                                  >
+                                    <Play className="h-3 w-3" />
+                                    Play
+                                  </Button>
+                                  <span className="text-xs text-gray-500">
+                                    {Math.round(r.audioData.length / 1024)}KB
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-gray-400">No audio</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {r.aiScore ? (
+                                <Badge variant={r.aiScore >= 70 ? "default" : r.aiScore >= 50 ? "secondary" : "destructive"}>
+                                  {r.aiScore}/100
+                                </Badge>
+                              ) : (
+                                <span className="text-gray-400">Not scored</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-1">
                                 <Button 
                                   size="sm" 
-                                  onClick={() => {
-                                    console.log('Playing audio for response:', r.id);
-                                    console.log('Audio data length:', r.audioData?.length);
-                                    playAudioBase64(r.audioData);
-                                  }}
+                                  variant="outline"
+                                  onClick={() => downloadMedia(r.sessionId, 'audio')}
+                                  disabled={!r.audioData}
+                                  className="flex items-center gap-1"
                                 >
-                                  Play
+                                  <Download className="h-3 w-3" />
+                                  Audio
                                 </Button>
-                                <span className="text-xs text-gray-500">
-                                  {r.audioData?.length ? `${Math.round(r.audioData.length / 1024)}KB` : '0KB'}
-                                </span>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline"
+                                  onClick={() => downloadMedia(r.sessionId, 'video')}
+                                  className="flex items-center gap-1"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  Video
+                                </Button>
                               </div>
-                            ) : (
-                              <span className="text-gray-400">No audio</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">{new Date(r.createdAt).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-gray-400" />
+                                {new Date(r.createdAt).toLocaleString()}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
                 )}
               </div>
             </div>
           </div>
         )}
       </main>
+      
+      {/* Simple Scheduling Modal */}
+      {schedulingDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Schedule Interview</h3>
+            <ScheduleInterviewForm onSubmit={(data) => scheduleInterview(responses[0]?.interviewId, data)} />
+            <Button 
+              variant="outline" 
+              onClick={() => setSchedulingDialog(false)}
+              className="mt-2 w-full"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// Schedule Interview Form Component
+function ScheduleInterviewForm({ onSubmit }: { onSubmit: (data: any) => void }) {
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      startTime: new Date(startTime),
+      endTime: new Date(endTime)
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <Label htmlFor="startTime">Interview Start Time</Label>
+        <Input
+          id="startTime"
+          type="datetime-local"
+          value={startTime}
+          onChange={(e) => setStartTime(e.target.value)}
+          required
+        />
+      </div>
+      
+      <div>
+        <Label htmlFor="endTime">Interview End Time</Label>
+        <Input
+          type="datetime-local"
+          value={endTime}
+          onChange={(e) => setEndTime(e.target.value)}
+          required
+        />
+      </div>
+      
+      <div className="flex justify-end gap-2">
+        <Button type="submit">Schedule Interview</Button>
+        <Button type="button" variant="outline">Cancel</Button>
+      </div>
+    </form>
   );
 }

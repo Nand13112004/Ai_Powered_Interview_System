@@ -6,6 +6,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const interviewRoutes = require('./routes/interviews');
 const sessionRoutes = require('./routes/sessions');
+const scoringRoutes = require('./routes/scoring');
 const generateQuestionsRoute = require('./routes/generateQuestions');
 const answersRouter = require('./routes/answers');
 const responsesRouter = require('./routes/responses');
@@ -75,6 +76,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/interviews', authenticateToken, interviewRoutes);
 app.use('/api/sessions', authenticateToken, sessionRoutes);
+app.use('/api/scoring', authenticateToken, scoringRoutes);
 app.use('/api/generate-questions', generateQuestionsRoute);
 app.use('/api/answers', answersRouter);
 app.use('/api/responses', responsesRouter);

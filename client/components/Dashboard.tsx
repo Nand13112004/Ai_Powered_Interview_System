@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRouter } from 'next/navigation'
+import { toast } from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -20,9 +22,7 @@ import {
   Calendar,
   TrendingUp
 } from 'lucide-react'
-import { toast } from 'react-hot-toast'
 import { api } from '@/lib/api'
-import { useRouter } from 'next/navigation'
 import SessionHistory from './SessionHistory'
 import Analytics from './Analytics'
 import JoinByCode from './JoinByCode'
@@ -56,7 +56,7 @@ interface Session {
 }
 
 export default function Dashboard() {
-  const { user, logout } = useAuth()
+  const { user, logout, loading: authLoading, clearCorruptedAuth } = useAuth()
   const router = useRouter()
   const [interviews, setInterviews] = useState<Interview[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
@@ -65,20 +65,79 @@ export default function Dashboard() {
   const [joinedInterviewId, setJoinedInterviewId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchData()
-  }, [])
+    // Wait for auth loading to complete
+    if (authLoading) {
+      return
+    }
+    
+    // Only fetch data if user is authenticated
+    if (user) {
+      fetchData()
+    } else {
+      // If no user after auth loading is complete, redirect to login
+      setLoading(false)
+      router.push('/login')
+    }
+  }, [user, authLoading])
 
   const fetchData = async () => {
     try {
+      // Check if user is authenticated
+      if (!user) {
+        console.log('User not authenticated, redirecting to login')
+        router.push('/login')
+        setLoading(false)
+        return
+      }
+
+      console.log('User authenticated, fetching data...', { user })
+      
+      // Check if token exists
+      const token = document.cookie.split(';').find(c => c.trim().startsWith('token='))
+      console.log('Token exists:', !!token)
+      
       const [interviewsRes, sessionsRes] = await Promise.all([
         api.get('/interviews'),
         api.get('/sessions')
       ])
       
-      setInterviews(interviewsRes.data.interviews)
-      setSessions(sessionsRes.data.sessions)
-    } catch (error) {
+      console.log('API responses:', { interviews: interviewsRes.data, sessions: sessionsRes.data })
+      
+      setInterviews(interviewsRes.data.interviews || [])
+      setSessions(sessionsRes.data.sessions || [])
+    } catch (error: any) {
       console.error('Error fetching data:', error)
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      })
+      
+      // Handle authentication errors specifically
+      if (error.response?.status === 401) {
+        console.log('Authentication failed, redirecting to login')
+        toast.error('Please log in to access the dashboard')
+        router.push('/login')
+        return
+      }
+      
+      // Handle 404 errors - might be route issue
+      if (error.response?.status === 404) {
+        console.log('Route not found - checking server routes')
+        toast.error('Server route not found. Please check server configuration.')
+        return
+      }
+      
+      // Handle 403 errors - authentication/authorization issue
+      if (error.response?.status === 403) {
+        console.log('Access forbidden - likely token issue')
+        toast.error('Authentication issue detected. Clearing corrupted data...')
+        clearCorruptedAuth()
+        return
+      }
+      
+      // Handle other errors
       toast.error('Failed to load dashboard data')
     } finally {
       setLoading(false)
@@ -102,7 +161,7 @@ export default function Dashboard() {
     toast.success('Logged out successfully')
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
@@ -240,7 +299,7 @@ export default function Dashboard() {
                         <div className="flex gap-2">
                           <Badge variant="outline">{interview.level}</Badge>
                           {(() => {
-                            const attemptedSession = sessions.find(s => s.interview.id === interview.id);
+                            const attemptedSession = sessions.find(s => s.interview?.id === interview.id);
                             const isAttempted = attemptedSession && attemptedSession.status === 'completed';
                             return isAttempted ? (
                               <Badge variant="secondary">Completed</Badge>
@@ -262,7 +321,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                       {(() => {
-                        const attemptedSession = sessions.find(s => s.interview.id === interview.id);
+                        const attemptedSession = sessions.find(s => s.interview?.id === interview.id);
                         const isAttempted = attemptedSession && attemptedSession.status === 'completed';
                         
                         return (
@@ -293,7 +352,7 @@ export default function Dashboard() {
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <h3 className="font-semibold">{session.interview.title}</h3>
+                            <h3 className="font-semibold">{session.interview?.title || 'Unknown Interview'}</h3>
                             <p className="text-sm text-gray-600">
                               {new Date(session.startedAt).toLocaleDateString()}
                             </p>

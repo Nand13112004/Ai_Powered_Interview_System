@@ -135,9 +135,13 @@ while True:
 
     if cheating_score >= CHEATING_THRESHOLD:
         emit_event('session_flagged', {'score': cheating_score, 'warnings': warnings})
-        cv2.putText(frame, "🚨 SESSION FLAGGED!", (30,h//2), cv2.FONT_HERSHEY_SIMPLEX,1.5,(0,0,255),3)
+        emit_event('interview_terminated', {'reason': 'cheating_detected', 'score': cheating_score, 'warnings': warnings})
+        print(f"🚨 CHEATING DETECTED! Score: {cheating_score}, Threshold: {CHEATING_THRESHOLD}")
+        print("🛑 Interview terminated due to cheating detection")
+        break
 
-    cv2.imshow("Cheating Detection", frame)
+    # Remove cv2.imshow to prevent face detection window from opening
+    # cv2.imshow("Cheating Detection", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
@@ -146,3 +150,4 @@ if sio.connected:
     sio.disconnect()
 cap.release()
 cv2.destroyAllWindows()
+

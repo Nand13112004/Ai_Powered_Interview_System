@@ -11,6 +11,18 @@ const interviewSchema = new mongoose.Schema({
   password: { type: String, required: true },
   isActive: { type: Boolean, default: true },
   userId: { type: String, required: true },
+  
+  // Scheduling fields
+  scheduledStartTime: { type: Date },
+  scheduledEndTime: { type: Date },
+  isScheduled: { type: Boolean, default: false },
+  requiresSchedule: { type: Boolean, default: false },
+  
+  // Additional metadata
+  maxParticipants: { type: Number, default: 1 },
+  autoStart: { type: Boolean, default: false },
+  allowLateJoin: { type: Boolean, default: true },
+  timeZone: { type: String, default: 'UTC' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Interview', interviewSchema);

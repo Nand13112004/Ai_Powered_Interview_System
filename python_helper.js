@@ -48,6 +48,13 @@ app.post('/run-python', (req, res) => {
   pythonProcess.on('close', (code) => {
     console.log(`❌ Python process for session ${sessionId} exited with code ${code}`);
     delete runningProcesses[sessionId];
+    
+    // If process exited due to cheating detection (code 0 is normal exit)
+    if (code === 0) {
+      console.log(`✅ Python cheating detection process completed normally for session ${sessionId}`);
+    } else {
+      console.log(`⚠️ Python cheating detection process exited with error code ${code} for session ${sessionId}`);
+    }
   });
 
   pythonProcess.on('error', (err) => {

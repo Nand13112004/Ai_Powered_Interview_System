@@ -201,6 +201,33 @@ const setupSocketHandlers = (io) => {
         metaForEmit = meta;
       }
 
+      // Handle interview termination due to cheating
+      if (type === 'interview_terminated') {
+        logger.warn(`🚨 Interview terminated due to cheating for session ${sessionId}`);
+        
+        // Update session status to completed with cheating flag
+        try {
+          await Session.findByIdAndUpdate(sessionId, { 
+            status: 'completed', 
+            completedAt: new Date(),
+            cheatingDetected: true,
+            cheatingScore: metaForEmit.score || 0,
+            cheatingWarnings: metaForEmit.warnings || {}
+          });
+        } catch (dbErr) {
+          logger.warn('Failed to update session with cheating flag:', dbErr.message);
+        }
+
+        // Emit interview completion event to client
+        io.to(`interview_${sessionId}`).emit('interview_completed', {
+          sessionId,
+          reason: 'cheating_detected',
+          message: 'Interview terminated due to cheating detection',
+          cheatingScore: metaForEmit.score || 0,
+          warnings: metaForEmit.warnings || {}
+        });
+      }
+
       // Relay to clients
       io.to(`interview_${sessionId}`).emit('proctor_detection', { type, meta: metaForEmit, at });
     }

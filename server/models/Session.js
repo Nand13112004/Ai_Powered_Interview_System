@@ -12,6 +12,24 @@ const sessionSchema = new mongoose.Schema({
   videoData: { type: Buffer },
   scores: { type: Object },
   feedback: { type: Object },
+  
+  // Enhanced tracking
+  entryTime: { type: Date }, // When candidate entered interview room
+  answerCount: { type: Number, default: 0 },
+  timeSpentPerQuestion: [{ questionId: String, timeSpent: Number }],
+  
+  // AI Scoring
+  aiScore: { type: Number },
+  aiEvaluation: { type: Object },
+  
+  // Media metadata
+  audioFormat: { type: String, default: 'webm' },
+  videoFormat: { type: String, default: 'webm' },
+  recordingQuality: { type: String, default: 'medium' },
+  fileSizes: { 
+    audio: { type: Number }, 
+    video: { type: Number } 
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Session', sessionSchema);

@@ -121,7 +121,7 @@ router.get('/:id/responses', async (req, res) => {
       sessionId: r.sessionId,
       questionId: r.questionId,
       text: r.text,
-      audioData: r.audioData ? Buffer.from(r.audioData).toString('base64') : null,
+      audioData: r.audioData ? r.audioData.toString('base64') : null,
       createdAt: r.createdAt,
       user: userMap.get(r.userId),
       question: questionMap.get(r.questionId)
@@ -309,6 +309,37 @@ router.post("/join-by-code", async (req, res) => {
   } catch (error) {
     logger.error("Error joining interview by code:", error);
     res.status(500).json({ error: "Failed to join interview" });
+  }
+});
+
+// Get interview by code (public access for verification)
+router.get("/by-code/:code", async (req, res) => {
+  try {
+    const { code } = req.params;
+    
+    const interview = await Interview.findOne({ code }).lean();
+    
+    if (!interview) {
+      return res.status(404).json({ error: "Interview not found" });
+    }
+
+    // Return basic interview info for verification
+    res.json({
+      id: interview._id.toString(),
+      title: interview.title,
+      code: interview.code,
+      duration: interview.duration,
+      scheduledStartTime: interview.scheduledStartTime,
+      scheduledEndTime: interview.scheduledEndTime,
+      isScheduled: interview.isScheduled,
+      requiresSchedule: interview.requiresSchedule,
+      allowLateJoin: interview.allowLateJoin || false,
+      isActive: interview.isActive
+    });
+
+  } catch (error) {
+    logger.error("Error fetching interview by code:", error);
+    res.status(500).json({ error: "Failed to fetch interview" });
   }
 });
 

@@ -14,8 +14,19 @@ export const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const token = Cookies.get('token')
+    console.log('API Request - Token check:', {
+      hasToken: !!token,
+      tokenLength: token?.length,
+      tokenStart: token?.substring(0, 20),
+      url: config.url,
+      method: config.method
+    })
+    
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
+      console.log('Authorization header set:', config.headers.Authorization.substring(0, 30) + '...')
+    } else {
+      console.log('No token found, request will fail authentication')
     }
     return config
   },
@@ -29,8 +40,12 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      console.log('Authentication token expired or invalid, clearing token')
       Cookies.remove('token')
-      window.location.href = '/'
+      // Only redirect if we're not already on the login page
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error)
   }

@@ -45,6 +45,7 @@ interface Interview {
 
 interface InterviewRoomProps {
   interview: Interview
+  sessionId?: string
   onComplete: () => void
 }
 
@@ -54,7 +55,7 @@ interface Message {
   timestamp: Date
 }
 
-export default function InterviewRoom({ interview, onComplete }: InterviewRoomProps) {
+export default function InterviewRoom({ interview, sessionId: propSessionId, onComplete }: InterviewRoomProps) {
   const { user } = useAuth(); // user?.id is your candidateId
   const [isConnected, setIsConnected] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -65,14 +66,18 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const [answeredByQuestionId, setAnsweredByQuestionId] = useState<Record<string, boolean>>({})
   const [draftAnswersByQuestionId, setDraftAnswersByQuestionId] = useState<Record<string, string>>({})
   // Removed duplicate declaration of currentQuestion state
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string | null>(propSessionId || null)
   const [elapsedTime, setElapsedTime] = useState(0)
+  const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null)
+  const [questionStartTime, setQuestionStartTime] = useState<Date | null>(null)
+  const [timeSpentPerQuestion, setTimeSpentPerQuestion] = useState<Record<string, number>>({})
   const [isCompleted, setIsCompleted] = useState(false)
   const [incidentCount, setIncidentCount] = useState(0)
   const [incidents, setIncidents] = useState<Array<{type: string, meta: any, timestamp: Date}>>([])
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
   const [pythonCommand, setPythonCommand] = useState<string | null>(null)
+  const [interviewScheduledTime, setInterviewScheduledTime] = useState<{start: Date | null, end: Date | null}>({start: null, end: null})
   const INCIDENT_THRESHOLD = 5
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -523,7 +528,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
 
     const currentQ = interview.questions[currentQuestionIndex]
     if (typedResponse.trim() && currentQuestionId) {
-      await submitAnswerToBackend(typedResponse, currentQuestionId);
       sendTextMessage(typedResponse.trim())
       setTypedResponse('')
       // Clear draft when answer is submitted
@@ -575,7 +579,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
     try {
       // Submit any remaining typed response
       if (typedResponse.trim() && currentQuestionId) {
-        await submitAnswerToBackend(typedResponse, currentQuestionId);
         sendTextMessage(typedResponse.trim());
         setTypedResponse('');
       }
@@ -594,7 +597,6 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
   const submitAllAnswers = async () => {
     if (!interview.questions || !user?.id) return;
 
-    const submissionPromises: Promise<any>[] = [];
     const submittedAnswers = new Set<string>();
 
     // Create a map of question responses from messages
@@ -618,28 +620,16 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
       }
     }
 
-    // Submit answers for all questions that have responses
+    // Submit answers for all questions that have responses via WebSocket
     questionResponses.forEach((responseText, questionId) => {
       if (!answeredByQuestionId[questionId] && responseText.trim()) {
-        submissionPromises.push(
-          submitAnswerToBackend(responseText, questionId)
-        );
+        sendTextMessage(responseText);
         submittedAnswers.add(questionId);
       }
     });
 
-    // Wait for all submissions to complete
-    if (submissionPromises.length > 0) {
-      const results = await Promise.allSettled(submissionPromises);
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      
-      console.log(`Submitted ${successful} answers successfully, ${failed} failed`);
-      
-      if (failed > 0) {
-        console.warn('Some answers failed to submit:', results.filter(r => r.status === 'rejected'));
-      }
-    }
+    // Note: WebSocket submissions are asynchronous, no need to wait
+    console.log(`Submitting ${submittedAnswers.size} answers via WebSocket`);
   }
 
   const initializeSocket = () => {
@@ -925,31 +915,13 @@ export default function InterviewRoom({ interview, onComplete }: InterviewRoomPr
         console.log('Base64 audio length:', base64Audio.length)
         const questionId = interview.questions[currentQuestionIndex]?.id
         
-        // Send via WebSocket for real-time processing
+        // Send via WebSocket for real-time processing (this will also save to database)
         socketService.emit('audio_data', {
           sessionId,
           audioBlob: base64Audio,
           timestamp: new Date().toISOString(),
           questionId
         })
-
-        // Also submit to API for database storage
-        if (questionId && user?.id) {
-          try {
-            console.log('Submitting audio to API...')
-            const response = await api.post('/responses', {
-              userId: user.id,
-              interviewId: interview.id,
-              sessionId,
-              questionId,
-              audioData: base64Audio
-            });
-            console.log('✅ Audio response submitted successfully:', response.data);
-          } catch (error) {
-            console.error('Failed to submit audio response:', error);
-            // Don't fail the whole process if API submission fails
-          }
-        }
 
         const qId = interview.questions[currentQuestionIndex]?.id
         if (qId) {

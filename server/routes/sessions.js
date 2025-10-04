@@ -1,312 +1,398 @@
 const express = require('express');
-const Joi = require('joi');
-const { logger } = require('../utils/logger');
+const router = express.Router();
 const Session = require('../models/Session');
 const Interview = require('../models/Interview');
-
-const router = express.Router();
-
-// Using Mongoose models, no Prisma
-
-// Validation schemas
-const createSessionSchema = Joi.object({
-  interviewId: Joi.string().required()
-});
-
-const updateSessionSchema = Joi.object({
-  status: Joi.string().valid('in_progress', 'completed', 'cancelled').optional(),
-  transcript: Joi.object().optional(),
-  audioUrl: Joi.string().optional(),
-  videoUrl: Joi.string().optional(),
-  scores: Joi.object().optional(),
-  feedback: Joi.object().optional()
-});
+const { logger } = require('../utils/logger');
 
 // Get user's sessions
 router.get('/', async (req, res) => {
   try {
-    const sessionsRaw = await Session.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean();
-    // For interview info, fetch in batch
-    const interviewIds = [...new Set(sessionsRaw.map(s => s.interviewId))];
-    const interviews = await Interview.find({ _id: { $in: interviewIds } }).lean();
-    const mapById = new Map(interviews.map(i => [i._id.toString(), i]));
-    const sessions = sessionsRaw.map(s => ({
-      id: s._id.toString(),
-      userId: s.userId,
-      interviewId: s.interviewId,
-      status: s.status,
-      startedAt: s.startedAt,
-      completedAt: s.completedAt,
-      duration: s.duration,
-      createdAt: s.createdAt,
-      interview: mapById.get(s.interviewId) ? {
-        id: mapById.get(s.interviewId)._id.toString(),
-        title: mapById.get(s.interviewId).title,
-        role: mapById.get(s.interviewId).role,
-        level: mapById.get(s.interviewId).level,
-        duration: mapById.get(s.interviewId).duration,
-      } : null,
+    const sessions = await Session.find({ userId: req.user.id })
+      .populate('interviewId', 'title duration level role')
+      .sort({ createdAt: -1 });
+
+    // Transform sessions to match client expectations
+    const transformedSessions = sessions.map(session => ({
+      id: session._id,
+      status: session.status,
+      startedAt: session.startedAt || session.createdAt,
+      completedAt: session.completedAt,
+      duration: session.duration,
+      interview: {
+        id: session.interviewId._id,
+        title: session.interviewId.title,
+        duration: session.interviewId.duration,
+        level: session.interviewId.level,
+        role: session.interviewId.role
+      },
+      scores: session.scores,
+      feedback: session.feedback
     }));
 
-    res.json({ sessions });
+    res.json({ sessions: transformedSessions });
   } catch (error) {
     logger.error('Error fetching sessions:', error);
     res.status(500).json({ error: 'Failed to fetch sessions' });
   }
 });
 
-// Get session by ID
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const sessionDoc = await Session.findOne({ _id: id, userId: req.user.id }).lean();
-    if (!sessionDoc) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-    const interview = await Interview.findById(sessionDoc.interviewId).lean();
-    const session = {
-      id: sessionDoc._id.toString(),
-      userId: sessionDoc.userId,
-      interviewId: sessionDoc.interviewId,
-      status: sessionDoc.status,
-      startedAt: sessionDoc.startedAt,
-      completedAt: sessionDoc.completedAt,
-      duration: sessionDoc.duration,
-      transcript: sessionDoc.transcript,
-      scores: sessionDoc.scores,
-      feedback: sessionDoc.feedback,
-      interview: interview ? {
-        id: interview._id.toString(),
-        title: interview.title,
-        role: interview.role,
-        level: interview.level,
-        duration: interview.duration,
-      } : null,
-    };
-
-    if (!session) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-
-    res.json({ session });
-  } catch (error) {
-    logger.error('Error fetching session:', error);
-    res.status(500).json({ error: 'Failed to fetch session' });
-  }
-});
-
-// Create new session (or resume existing)
+// Create and start a new session
 router.post('/', async (req, res) => {
   try {
-    const { error, value } = createSessionSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
+    const { interviewId } = req.body;
+
+    if (!interviewId) {
+      return res.status(400).json({ error: 'Interview ID is required' });
     }
 
-    const { interviewId } = value;
-
-    const interview = await Interview.findById(interviewId).lean();
-
+    // Check if interview exists
+    const interview = await Interview.findById(interviewId);
     if (!interview) {
       return res.status(404).json({ error: 'Interview not found' });
     }
 
-    // Check if user already has ANY session for this interview (one-time join policy)
-    const existingSession = await Session.findOne({ userId: req.user.id, interviewId }).lean();
-
-    if (existingSession) {
-      // If session is completed, don't allow re-entry
-      if (existingSession.status === 'completed') {
-        return res.status(409).json({ 
-          error: 'Interview already completed',
-          message: 'You have already completed this interview. Each candidate can only participate once.',
-          sessionId: existingSession._id.toString(),
-          existingSession: {
-            id: existingSession._id.toString(),
-            status: existingSession.status,
-            startedAt: existingSession.startedAt,
-            completedAt: existingSession.completedAt
-          }
-        });
-      }
-      
-      // If session is pending or in_progress, allow resumption
-      return res.status(200).json({ 
-        message: 'Resuming existing interview session',
-        sessionId: existingSession._id.toString(),
-        existingSession: {
-          id: existingSession._id.toString(),
-          status: existingSession.status,
-          startedAt: existingSession.startedAt,
-          completedAt: existingSession.completedAt
-        }
-      });
-    }
-
-    const created = await Session.create({ userId: req.user.id, interviewId, status: 'pending' });
-    const session = {
-      id: created._id.toString(),
-      userId: created.userId,
-      interviewId: created.interviewId,
-      status: created.status,
-      startedAt: created.startedAt,
-      completedAt: created.completedAt,
-      duration: created.duration,
-      interview: {
-        id: interview._id.toString(),
-        title: interview.title,
-        role: interview.role,
-        level: interview.level,
-        duration: interview.duration,
-      }
-    };
-
-    logger.info(`New session created: ${session.id} for user ${req.user.email}`);
-
-    res.status(201).json({
-      message: 'Session created successfully',
-      session
+    // Create session
+    const session = await Session.create({
+      userId: req.user.id,
+      interviewId: interviewId,
+      status: 'in_progress',
+      startedAt: new Date()
     });
+
+    logger.info(`Session ${session._id} created and started for user ${req.user.id}`);
+
+    res.json({ sessionId: session._id });
   } catch (error) {
     logger.error('Error creating session:', error);
     res.status(500).json({ error: 'Failed to create session' });
   }
 });
 
-// Update session
-router.put('/:id', async (req, res) => {
+// Verify interview password and check scheduling
+router.post('/verify-entry', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { error, value } = updateSessionSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
+    const { interviewCode, password, userId } = req.body;
+
+    if (!interviewCode || !password) {
+      return res.status(400).json({
+        error: 'Interview code and password are required'
+      });
     }
 
-    // Verify session belongs to user
-    const existingSession = await Session.findOne({ _id: id, userId: req.user.id });
-
-    if (!existingSession) {
-      return res.status(404).json({ error: 'Session not found' });
+    // Find interview
+    const interview = await Interview.findOne({ code: interviewCode });
+    if (!interview) {
+      return res.status(404).json({
+        error: 'Interview not found'
+      });
     }
 
-    // Update timestamps based on status
-    const updateData = { ...value };
-    if (value.status === 'in_progress' && !existingSession.startedAt) {
-      updateData.startedAt = new Date();
+    // Check password
+    if (interview.password !== password) {
+      return res.status(401).json({
+        error: 'Invalid password'
+      });
     }
-    if (value.status === 'completed' && !existingSession.completedAt) {
-      updateData.completedAt = new Date();
-      if (existingSession.startedAt) {
-        updateData.duration = Math.round(
-          (new Date() - existingSession.startedAt) / 60000 // minutes
-        );
+
+    // Check if interview is scheduled
+    if (interview.isScheduled) {
+      const now = new Date();
+      
+      // Check if interview has started
+      if (interview.scheduledStartTime && now < interview.scheduledStartTime) {
+        const timeUntilStart = Math.max(0, interview.scheduledStartTime - now);
+        return res.status(403).json({
+          error: 'Interview has not started yet',
+          scheduledStartTime: interview.scheduledStartTime,
+          timeUntilStart: timeUntilStart,
+          canStart: false
+        });
+      }
+
+      // Check if interview has ended
+      if (interview.scheduledEndTime && now > interview.scheduledEndTime) {
+        if (!interview.allowLateJoin) {
+          return res.status(403).json({
+            error: 'Interview has ended and late join is not allowed',
+            scheduledEndTime: interview.scheduledEndTime,
+            canStart: false
+          });
+        }
       }
     }
 
-    await Session.findByIdAndUpdate(id, updateData);
-    const sessionDoc = await Session.findById(id).lean();
-    const interview = await Interview.findById(sessionDoc.interviewId).lean();
-    const session = {
-      id: sessionDoc._id.toString(),
-      userId: sessionDoc.userId,
-      interviewId: sessionDoc.interviewId,
-      status: sessionDoc.status,
-      startedAt: sessionDoc.startedAt,
-      completedAt: sessionDoc.completedAt,
-      duration: sessionDoc.duration,
-      transcript: sessionDoc.transcript,
-      scores: sessionDoc.scores,
-      feedback: sessionDoc.feedback,
-      interview: interview ? {
-        id: interview._id.toString(),
-        title: interview.title,
-        role: interview.role,
-        level: interview.level,
-        duration: interview.duration,
-      } : null,
-    };
+    // Check if interview is active
+    if (!interview.isActive) {
+      return res.status(403).json({
+        error: 'Interview is not active'
+      });
+    }
 
-    logger.info(`Session updated: ${id} by ${req.user.email}`);
-
-    res.json({
-      message: 'Session updated successfully',
-      session
+    // Create or update session
+    let session = await Session.findOne({ 
+      userId: userId || req.user.id, 
+      interviewId: interview._id,
+      status: { $in: ['pending', 'in_progress'] }
     });
-  } catch (error) {
-    logger.error('Error updating session:', error);
-    res.status(500).json({ error: 'Failed to update session' });
-  }
-});
-
-// Delete session
-router.delete('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Verify session belongs to user
-    const session = await Session.findOne({ _id: id, userId: req.user.id });
 
     if (!session) {
-      return res.status(404).json({ error: 'Session not found' });
+      session = await Session.create({
+        userId: userId || req.user.id,
+        interviewId: interview._id,
+        status: 'pending',
+        entryTime: new Date()
+      });
+    } else {
+      session.entryTime = new Date();
+      await session.save();
     }
 
-    await Session.findByIdAndDelete(id);
+    res.json({
+      success: true,
+      sessionId: session._id,
+      interview: {
+        id: interview._id,
+        title: interview.title,
+        timeSlot: {
+          start: interview.scheduledStartTime,
+          end: interview.scheduledEndTime
+        },
+        duration: interview.duration,
+        allowLateJoin: interview.allowLateJoin
+      },
+      session: {
+        id: session._id,
+        status: session.status,
+        entryTime: session.entryTime
+      }
+    });
 
-    logger.info(`Session deleted: ${id} by ${req.user.email}`);
-
-    res.json({ message: 'Session deleted successfully' });
   } catch (error) {
-    logger.error('Error deleting session:', error);
-    res.status(500).json({ error: 'Failed to delete session' });
+    logger.error('Error verifying interview entry:', error);
+    res.status(500).json({
+      error: 'Failed to verify interview entry'
+    });
   }
 });
 
-// Start fresh session (complete existing one first)
-router.post('/fresh', async (req, res) => {
+// Start interview session
+router.post('/start/:sessionId', async (req, res) => {
   try {
-    const { error, value } = createSessionSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
+    const { sessionId } = req.params;
+    const { startVideoRecording = true, startAudioRecording = true } = req.body;
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
     }
 
-    const { interviewId } = value;
-
-    // Verify interview exists
-    const interview = await Interview.findById(interviewId);
-
-    if (!interview) {
-      return res.status(404).json({ error: 'Interview not found' });
+    // Verify access
+    if (session.userId !== req.user.id && req.user.role !== 'interviewer') {
+      return res.status(403).json({
+        error: 'Access denied'
+      });
     }
 
-    // Complete any existing active sessions for this interview
-    await Session.updateMany({ userId: req.user.id, interviewId, status: { $in: ['pending', 'in_progress'] } }, { status: 'completed', completedAt: new Date() });
-
-    // Create new session
-    const created = await Session.create({ userId: req.user.id, interviewId, status: 'pending' });
-    const session = {
-      id: created._id.toString(),
-      userId: created.userId,
-      interviewId: created.interviewId,
-      status: created.status,
-      interview: {
-        id: interview._id.toString(),
-        title: interview.title,
-        role: interview.role,
-        level: interview.level,
-        duration: interview.duration,
-      }
+    // Update session
+    session.status = 'in_progress';
+    session.startedAt = new Date();
+    session.recordingSettings = {
+      video: startVideoRecording,
+      audio: startAudioRecording,
+      quality: 'medium',
+      startedAt: new Date()
     };
+    await session.save();
 
-    logger.info(`New fresh session created: ${session.id} for user ${req.user.email}`);
+    logger.info(`Interview session ${sessionId} started for user ${req.user.id}`);
 
-    res.status(201).json({
-      message: 'Fresh session created successfully',
-      session
+    res.json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        startedAt: session.startedAt,
+        recordingSettings: session.recordingSettings
+      }
     });
+
   } catch (error) {
-    logger.error('Error creating fresh session:', error);
-    res.status(500).json({ error: 'Failed to create fresh session' });
+    logger.error('Error starting session:', error);
+    res.status(500).json({
+      error: 'Failed to start session'
+    });
+  }
+});
+
+// Complete interview session
+router.post('/complete/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { videoData, audioData, transcript } = req.body;
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
+    }
+
+    // Verify access
+    if (session.userId !== req.user.id && req.user.role !== 'interviewer') {
+      return res.status(403).json({
+        error: 'Access denied'
+      });
+    }
+
+    // Calculate duration
+    const now = new Date();
+    const duration = session.startedAt ? 
+      Math.round((now - session.startedAt) / 1000 / 60) : 0;
+
+    // Update session
+    session.status = 'completed';
+    session.completedAt = now;
+    session.duration = duration;
+    
+    if (videoData) {
+      session.videoData = Buffer.from(videoData, 'base64');
+      session.fileSizes = session.fileSizes || {};
+      session.fileSizes.video = session.videoData.length;
+    }
+    
+    if (audioData) {
+      session.audioData = Buffer.from(audioData, 'base64');
+      session.fileSizes = session.fileSizes || {};
+      session.fileSizes.audio = session.audioData.length;
+    }
+    
+    if (transcript) {
+      session.transcript = transcript;
+    }
+
+    await session.save();
+
+    logger.info(`Interview session ${sessionId} completed. Duration: ${duration} minutes`);
+
+    res.json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        duration: session.duration,
+        completedAt: session.completedAt,
+        fileSizes: session.fileSizes
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error completing session:', error);
+    res.status(500).json({
+      error: 'Failed to complete session'
+    });
+  }
+});
+
+// Download session media files
+router.get('/download/:sessionId/:mediaType', async (req, res) => {
+  try {
+    const { sessionId, mediaType } = req.params;
+    const { type = 'original' } = req.query; // original, compressed, etc.
+
+    if (!['video', 'audio'].includes(mediaType)) {
+      return res.status(400).json({
+        error: 'Invalid media type. Use "video" or "audio"'
+      });
+    }
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
+    }
+
+    // Verify access
+    if (session.userId !== req.user.id && req.user.role !== 'interviewer') {
+      return res.status(403).json({
+        error: 'Access denied'
+      });
+    }
+
+    const mediaData = mediaType === 'video' ? session.videoData : session.audioData;
+    const contentType = mediaType === 'video' ? 'video/webm' : 'audio/webm';
+
+    if (!mediaData) {
+      return res.status(404).json({
+        error: `${mediaType} not found for this session`
+      });
+    }
+
+    // Set headers for file download
+    const fileName = `interview_${sessionId}_${mediaType}_${new Date().getTime()}.webm`;
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', mediaData.length);
+
+    // Send file data
+    res.send(mediaData);
+
+  } catch (error) {
+    logger.error('Error downloading media:', error);
+    res.status(500).json({
+      error: 'Failed to download media file'
+    });
+  }
+});
+
+// Get session details with time tracking
+router.get('/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await Session.findById(sessionId)
+      .populate('userId', 'name email')
+      .populate('interviewId', 'title duration');
+
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found'
+      });
+    }
+
+    // Verify access
+    if (session.userId._id !== req.user.id && req.user.role !== 'interviewer') {
+      return res.status(403).json({
+        error: 'Access denied'
+      });
+    }
+
+    res.json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        startedAt: session.startedAt,
+        completedAt: session.completedAt,
+        entryTime: session.entryTime,
+        duration: session.duration,
+        answerCount: session.answerCount,
+        aiScore: session.aiScore,
+        aiEvaluation: session.aiEvaluation,
+        fileSizes: session.fileSizes,
+        timeSpentPerQuestion: session.timeSpentPerQuestion
+      },
+      interview: session.interviewId,
+      user: session.userId
+    });
+
+  } catch (error) {
+    logger.error('Error fetching session:', error);
+    res.status(500).json({
+      error: 'Failed to fetch session'
+    });
   }
 });
 
