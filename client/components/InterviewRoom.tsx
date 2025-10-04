@@ -78,11 +78,15 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const [sessionLoading, setSessionLoading] = useState(true)
   const [pythonCommand, setPythonCommand] = useState<string | null>(null)
   const [interviewScheduledTime, setInterviewScheduledTime] = useState<{start: Date | null, end: Date | null}>({start: null, end: null})
+  const [showFaceDetection, setShowFaceDetection] = useState(false)
+  const [faceDetectionStatus, setFaceDetectionStatus] = useState<string>('Initializing...')
+  const [faceCount, setFaceCount] = useState(0)
   const INCIDENT_THRESHOLD = 5
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const faceCountRef = useRef<number>(0)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -343,35 +347,49 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     let visionInterval: number | null = null
     const startVision = async () => {
       try {
+        setFaceDetectionStatus('Starting camera...')
         // Try using FaceDetector API if available
         const FaceDetectorCtor: any = (window as any).FaceDetector
         // Ensure camera stream
         if (!cameraStreamRef.current) {
           cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
         }
-        const video = document.createElement('video')
-        video.srcObject = cameraStreamRef.current as any
-        video.muted = true
-        await video.play()
+        
+        // Set up video element for display
+        if (videoRef.current) {
+          videoRef.current.srcObject = cameraStreamRef.current
+          videoRef.current.muted = true
+          await videoRef.current.play()
+        }
+        
+        setFaceDetectionStatus('Camera ready')
+        setShowFaceDetection(true)
 
         if (FaceDetectorCtor) {
           const detector = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 3 })
           const tick = async () => {
             try {
-              const faces = await detector.detect(video)
+              const faces = await detector.detect(videoRef.current!)
               const count = Array.isArray(faces) ? faces.length : 0
               faceCountRef.current = count
+              setFaceCount(count)
+              
               if (count === 0) {
+                setFaceDetectionStatus('No face detected')
                 reportIncident('no_face_detected')
               } else if (count > 1) {
+                setFaceDetectionStatus(`Multiple faces detected (${count})`)
                 reportIncident('multiple_faces_detected', { count })
+              } else {
+                setFaceDetectionStatus('Face detected - Good')
               }
             } catch (e) {
+              setFaceDetectionStatus('Detection error')
               // ignore detection errors
             }
           }
           
-          visionInterval = window.setInterval(tick, 4000)
+          visionInterval = window.setInterval(tick, 2000)
           return
         }
 
@@ -1418,6 +1436,33 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
             </div>
           </div>
         </div>
+
+        {/* Face Detection Display */}
+        {showFaceDetection && (
+          <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-10">
+            <div className="flex items-center space-x-3">
+              <div className="relative">
+                <video
+                  ref={videoRef}
+                  className="w-24 h-18 object-cover rounded border"
+                  autoPlay
+                  muted
+                  playsInline
+                />
+                <div className="absolute top-1 right-1 bg-black bg-opacity-75 text-white text-xs px-1 rounded">
+                  {faceCount}
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-gray-900">Face Detection</div>
+                <div className="text-xs text-gray-600">{faceDetectionStatus}</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {faceCount === 1 ? '✅ Good' : faceCount === 0 ? '⚠️ No face' : '❌ Multiple faces'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Hidden audio element */}
         <audio ref={audioRef} />

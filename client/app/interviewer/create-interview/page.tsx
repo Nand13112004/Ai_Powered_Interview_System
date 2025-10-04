@@ -23,6 +23,12 @@ export default function CreateInterview() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
+  
+  // Scheduling options
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledStartTime, setScheduledStartTime] = useState("");
+  const [scheduledEndTime, setScheduledEndTime] = useState("");
+  const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
 
   const addQuestion = () => {
     setQuestions([...questions, ""]);
@@ -80,6 +86,12 @@ export default function CreateInterview() {
         description,
         questions: filteredQuestions,
         password,
+        // Scheduling data
+        isScheduled,
+        scheduledStartTime: isScheduled ? new Date(scheduledStartTime) : null,
+        scheduledEndTime: isScheduled ? new Date(scheduledEndTime) : null,
+        timeZone,
+        requiresSchedule: isScheduled,
       });
 
       setSuccess(true);
@@ -186,6 +198,69 @@ export default function CreateInterview() {
                 maxLength={32}
                 required
               />
+
+              {/* Scheduling Section */}
+              <div className="border-t pt-4">
+                <div className="flex items-center space-x-2 mb-4">
+                  <input
+                    type="checkbox"
+                    id="isScheduled"
+                    checked={isScheduled}
+                    onChange={(e) => setIsScheduled(e.target.checked)}
+                    className="rounded"
+                  />
+                  <label htmlFor="isScheduled" className="text-sm font-medium">
+                    Schedule this interview for a specific time
+                  </label>
+                </div>
+
+                {isScheduled && (
+                  <div className="space-y-4 bg-gray-50 p-4 rounded">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Start Time</label>
+                      <input
+                        type="datetime-local"
+                        value={scheduledStartTime}
+                        onChange={(e) => setScheduledStartTime(e.target.value)}
+                        className="border rounded px-3 py-2 w-full"
+                        required={isScheduled}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">End Time</label>
+                      <input
+                        type="datetime-local"
+                        value={scheduledEndTime}
+                        onChange={(e) => setScheduledEndTime(e.target.value)}
+                        className="border rounded px-3 py-2 w-full"
+                        required={isScheduled}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Time Zone</label>
+                      <select
+                        value={timeZone}
+                        onChange={(e) => setTimeZone(e.target.value)}
+                        className="border rounded px-3 py-2 w-full"
+                      >
+                        <option value="UTC">UTC</option>
+                        <option value="America/New_York">Eastern Time</option>
+                        <option value="America/Chicago">Central Time</option>
+                        <option value="America/Denver">Mountain Time</option>
+                        <option value="America/Los_Angeles">Pacific Time</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Paris">Paris</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                        <option value="Asia/Shanghai">Shanghai</option>
+                        <option value="Asia/Kolkata">India</option>
+                      </select>
+                    </div>
+                    <p className="text-xs text-gray-600">
+                      Candidates will only be able to join the interview during the scheduled time window.
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {/* Questions Section */}
               <div>

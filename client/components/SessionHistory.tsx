@@ -175,29 +175,25 @@ export default function SessionHistory({ sessions }: SessionHistoryProps) {
                   </div>
                 )}
 
-                {session.duration && (
-                  <div className="flex items-center space-x-2">
-                    <Clock className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm font-medium">Duration</p>
-                      <p className="text-xs text-gray-600">
-                        {session.duration} minutes
-                      </p>
-                    </div>
+                <div className="flex items-center space-x-2">
+                  <Clock className="h-4 w-4 text-gray-500" />
+                  <div>
+                    <p className="text-sm font-medium">Duration</p>
+                    <p className="text-xs text-gray-600">
+                      {session.duration ? `${session.duration} minutes` : 'N/A'}
+                    </p>
                   </div>
-                )}
+                </div>
 
-                {session.scores && (
-                  <div className="flex items-center space-x-2">
-                    <TrendingUp className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm font-medium">Overall Score</p>
-                      <p className="text-xs text-gray-600">
-                        {session.scores.overall}/10
-                      </p>
-                    </div>
+                <div className="flex items-center space-x-2">
+                  <TrendingUp className="h-4 w-4 text-gray-500" />
+                  <div>
+                    <p className="text-sm font-medium">Overall Score</p>
+                    <p className="text-xs text-gray-600">
+                      {session.scores?.overall ? `${session.scores.overall}/10` : 'Pending'}
+                    </p>
                   </div>
-                )}
+                </div>
               </div>
 
               {session.scores && (
@@ -206,15 +202,21 @@ export default function SessionHistory({ sessions }: SessionHistoryProps) {
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
                       <span className="text-gray-600">Communication:</span>
-                      <span className="ml-2 font-medium">{session.scores.communication}/10</span>
+                      <span className="ml-2 font-medium">
+                        {session.scores.communication ? `${session.scores.communication}/10` : 'N/A'}
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-600">Technical:</span>
-                      <span className="ml-2 font-medium">{session.scores.technical}/10</span>
+                      <span className="ml-2 font-medium">
+                        {session.scores.technical ? `${session.scores.technical}/10` : 'N/A'}
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-600">Problem Solving:</span>
-                      <span className="ml-2 font-medium">{session.scores.problemSolving}/10</span>
+                      <span className="ml-2 font-medium">
+                        {session.scores.problemSolving ? `${session.scores.problemSolving}/10` : 'N/A'}
+                      </span>
                     </div>
                   </div>
                 </div>

@@ -19,8 +19,14 @@ const createInterviewSchema = Joi.object({
   level: Joi.string().valid("junior", "mid", "senior").required(),
   duration: Joi.number().min(1).max(120).required(),
   questions: Joi.array().items(Joi.string()).min(1).required(),
-  password: Joi.string().min(4).max(32).required() // interviewer sets password
-});
+  password: Joi.string().min(4).max(32).required(), // interviewer sets password
+  // Scheduling fields - explicitly allow these
+  isScheduled: Joi.boolean().optional(),
+  scheduledStartTime: Joi.date().allow(null).optional(),
+  scheduledEndTime: Joi.date().allow(null).optional(),
+  timeZone: Joi.string().optional(),
+  requiresSchedule: Joi.boolean().optional()
+}).unknown(true); // Allow unknown fields
 
 // ✅ Get all interviews
 router.get("/", async (req, res) => {
@@ -143,12 +149,16 @@ router.post("/", async (req, res) => {
     }
 
 
+    // Debug: Log the request body
+    console.log('Received interview creation request:', JSON.stringify(req.body, null, 2));
+    
     const { error, value } = createInterviewSchema.validate(req.body);
     if (error) {
+      console.log('Validation error:', error.details);
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { title, description, role, level, duration, questions, password } = value;
+    const { title, description, role, level, duration, questions, password, isScheduled, scheduledStartTime, scheduledEndTime, timeZone, requiresSchedule } = value;
 
     // Generate random code: A-Z, a-z, 0-9, length 8
     function generateRandomCode(length = 8) {
@@ -177,6 +187,12 @@ router.post("/", async (req, res) => {
       userId: req.user.id,
       code,
       password,
+      // Scheduling fields
+      isScheduled: isScheduled || false,
+      scheduledStartTime: scheduledStartTime || null,
+      scheduledEndTime: scheduledEndTime || null,
+      timeZone: timeZone || 'UTC',
+      requiresSchedule: requiresSchedule || false,
     });
     const questionDocs = await Question.insertMany(questions.map((q, i) => ({
       text: q,

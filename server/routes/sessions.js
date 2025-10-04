@@ -101,20 +101,30 @@ router.post('/verify-entry', async (req, res) => {
       // Check if interview has started
       if (interview.scheduledStartTime && now < interview.scheduledStartTime) {
         const timeUntilStart = Math.max(0, interview.scheduledStartTime - now);
+        const minutesUntilStart = Math.ceil(timeUntilStart / (1000 * 60));
+        
         return res.status(403).json({
           error: 'Interview has not started yet',
           scheduledStartTime: interview.scheduledStartTime,
           timeUntilStart: timeUntilStart,
+          minutesUntilStart: minutesUntilStart,
+          message: `Interview starts in ${minutesUntilStart} minutes`,
           canStart: false
         });
       }
 
       // Check if interview has ended
       if (interview.scheduledEndTime && now > interview.scheduledEndTime) {
+        const timeSinceEnd = now - interview.scheduledEndTime;
+        const minutesSinceEnd = Math.ceil(timeSinceEnd / (1000 * 60));
+        
         if (!interview.allowLateJoin) {
           return res.status(403).json({
             error: 'Interview has ended and late join is not allowed',
             scheduledEndTime: interview.scheduledEndTime,
+            timeSinceEnd: timeSinceEnd,
+            minutesSinceEnd: minutesSinceEnd,
+            message: `Interview ended ${minutesSinceEnd} minutes ago`,
             canStart: false
           });
         }
