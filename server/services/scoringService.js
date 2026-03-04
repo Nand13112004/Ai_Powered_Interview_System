@@ -1,10 +1,10 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Bytez = require('bytez.js');
 const { logger } = require('../utils/logger');
 
 class ScoringService {
   constructor() {
-    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+    this.sdk = new Bytez(process.env.BYTEZ_API_KEY);
+    this.model = this.sdk.model("inference-net/Schematron-3B");
   }
 
   async evaluateResponse(question, candidateAnswer, audioText) {
@@ -49,9 +49,19 @@ Please provide a JSON response with the following format:
 Return ONLY the JSON response, no additional text.
 `;
 
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const { error, output } = await this.model.run([
+        {
+          "role": "user",
+          "content": prompt
+        }
+      ]);
+
+      if (error) {
+        logger.error('Bytez API error for scoring:', error);
+        throw new Error(error);
+      }
+
+      const text = output && output.content ? output.content : '';
       
       // Parse JSON response
       const evaluation = JSON.parse(text);

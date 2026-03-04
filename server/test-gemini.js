@@ -1,18 +1,29 @@
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Bytez = require('bytez.js');
 
-async function testGeminiAPI() {
+async function testBytezAPI() {
   try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const sdk = new Bytez(process.env.BYTEZ_API_KEY);
+    const model = sdk.model("inference-net/Schematron-3B");
+    
     const prompt = 'generate 5 question for difficult level software engineer role';
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    console.log('Gemini API response:', text);
+    
+    const { error, output } = await model.run([
+      {
+        "role": "user",
+        "content": prompt
+      }
+    ]);
+
+    if (error) {
+      console.error('Bytez API error:', error);
+      return;
+    }
+    
+    console.log('Bytez API response:', output);
   } catch (error) {
-    console.error('Gemini API error:', error.message);
+    console.error('Bytez API error:', error.message);
   }
 }
 
-testGeminiAPI();
+testBytezAPI();

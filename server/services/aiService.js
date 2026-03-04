@@ -1,10 +1,10 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Bytez = require('bytez.js');
 const { logger } = require('../utils/logger');
 
 class AIService {
   constructor() {
-    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    this.sdk = new Bytez(process.env.BYTEZ_API_KEY);
+    this.model = this.sdk.model("inference-net/Schematron-3B");
   }
 
   async generateInterviewResponse(sessionState, candidateResponse) {
@@ -46,9 +46,19 @@ class AIService {
       
       Respond as the interviewer. If the candidate has answered well, acknowledge it and ask the next question or provide a follow-up. If you need more information, ask a clarifying question.`;
 
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const { error, output } = await this.model.run([
+        {
+          "role": "user",
+          "content": prompt
+        }
+      ]);
+
+      if (error) {
+        logger.error('Bytez API error:', error);
+        throw new Error(error);
+      }
+
+      const text = output && output.content ? output.content : "I appreciate your response. Let's continue with the interview.";
       
       // Check if we should move to the next question
       if (this.shouldMoveToNextQuestion(text, currentQuestionIndex, questions.length)) {
@@ -124,9 +134,19 @@ class AIService {
 
       Be specific and constructive in your feedback.`;
 
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const { error, output } = await this.model.run([
+        {
+          "role": "user",
+          "content": prompt
+        }
+      ]);
+
+      if (error) {
+        logger.error('Bytez API error for feedback:', error);
+        throw new Error(error);
+      }
+
+      const text = output && output.content ? output.content : '';
       
       // Try to parse JSON from the response
       try {

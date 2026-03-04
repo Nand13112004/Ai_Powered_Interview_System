@@ -15,7 +15,7 @@ export default function CreateInterview() {
   const [level, setLevel] = useState("");
   const [duration, setDuration] = useState(30);
   const [description, setDescription] = useState("");
-  const [questions, setQuestions] = useState<string[]>([""]);
+  const [questions, setQuestions] = useState<any[]>([""]);
   // Removed rubric input
   const [password, setPassword] = useState("");
   const [createdCode, setCreatedCode] = useState("");
@@ -51,7 +51,18 @@ export default function CreateInterview() {
     try {
       const res = await api.post("/generate-questions", { role, level });
       if (res.data.questions && Array.isArray(res.data.questions)) {
-        setQuestions(res.data.questions);
+        // Store the full question objects (with options) for display
+        // But also keep backward compatibility with string questions
+        const processedQuestions = res.data.questions.map((q: any) => {
+          if (typeof q === 'string') {
+            return q; // Keep string questions as-is
+          } else if (q.question && q.options) {
+            return q; // Keep structured questions as-is
+          } else {
+            return q.question || q; // Fallback
+          }
+        });
+        setQuestions(processedQuestions);
       } else {
         setError("Failed to generate questions");
       }
@@ -70,7 +81,10 @@ export default function CreateInterview() {
     setSuccess(false);
 
     try {
-      const filteredQuestions = questions.filter((q) => q.trim() !== "");
+      const filteredQuestions = questions.map((q) => {
+        const questionText = typeof q === 'string' ? q : q.question || '';
+        return questionText.trim();
+      }).filter((q) => q !== "");
       if (filteredQuestions.length === 0) {
         throw new Error("At least one question is required");
       }
@@ -265,27 +279,57 @@ export default function CreateInterview() {
               {/* Questions Section */}
               <div>
                 <label className="block text-sm font-medium mb-2">Questions</label>
-                {questions.map((question, index) => (
-                  <div key={index} className="flex gap-2 mb-2">
-                    <input
-                      className="border rounded px-3 py-2 flex-1"
-                      value={question}
-                      onChange={(e) => updateQuestion(index, e.target.value)}
-                      placeholder={`Question ${index + 1}`}
-                      required
-                    />
-                    {questions.length > 1 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => removeQuestion(index)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                {questions.map((question, index) => {
+                  const questionText = typeof question === 'string' ? question : question.question || '';
+                  const options = typeof question === 'object' && question.options ? question.options : [];
+                  const isMCQ = options.length > 0;
+                  
+                  return (
+                  <div key={index} className="mb-4 p-3 border rounded-lg">
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        className="border rounded px-3 py-2 flex-1"
+                        value={questionText}
+                        onChange={(e) => updateQuestion(index, e.target.value)}
+                        placeholder={`Question ${index + 1}`}
+                        required
+                      />
+                      {questions.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => removeQuestion(index)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    
+                    {/* Show MCQ options if available */}
+                    {isMCQ && (
+                      <div className="ml-4 space-y-1 text-sm text-gray-600">
+                        <div className="font-medium text-gray-700 mb-1">Options:</div>
+                        {options.map((option, optIndex) => (
+                          <div key={optIndex} className="flex items-center gap-2">
+                            <span className="font-mono bg-gray-100 px-2 py-1 rounded text-xs">
+                              {option.charAt(0)}
+                            </span>
+                            <span>{option.substring(2).trim()}</span>
+                          </div>
+                        ))}
+                        {question.correctAnswer && (
+                          <div className="mt-2 pt-2 border-t text-xs">
+                            <span className="font-medium text-green-600">Correct Answer: </span>
+                            <span className="font-mono bg-green-100 px-2 py-1 rounded">
+                              {question.correctAnswer}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                ))}
+                )})}
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={addQuestion}>
                     <Plus className="h-4 w-4 mr-2" /> Add Question

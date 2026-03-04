@@ -1,14 +1,25 @@
 const nodemailer = require('nodemailer');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
-});
+let transporter = null;
+
+// Initialize transporter only if credentials are available
+if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_PASS,
+    },
+  });
+}
 
 async function sendVerificationEmail(to, code) {
+  // Skip email sending if transporter is not configured
+  if (!transporter) {
+    console.warn('⚠️ Email not configured - skipping verification email. Set GMAIL_USER and GMAIL_PASS in .env to enable.');
+    return { skipped: true };
+  }
+
   const brandName = 'MockMate AI';
   const subject = `Verify your email for ${brandName}`;
   const previewText = `Your ${brandName} verification code is ${code}`;

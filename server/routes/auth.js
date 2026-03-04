@@ -177,7 +177,31 @@ router.post('/register', async (req, res) => {
     };
 
     logger.info(`New user registered: ${email}`);
-    await sendVerificationEmail(email, verificationCode);
+
+    // Try to send verification email (may fail if credentials not configured)
+    let emailSent = false;
+    try {
+      const result = await sendVerificationEmail(email, verificationCode);
+      emailSent = !result?.skipped;
+    } catch (emailError) {
+      logger.warn(`Failed to send verification email to ${email}:`, emailError.message);
+    }
+
+    // If email not configured, auto-verify the user for development convenience
+    if (!emailSent) {
+      created.isVerified = true;
+      created.verificationCode = null;
+      created.verificationExpires = null;
+      await created.save();
+      user.isVerified = true;
+
+      res.status(201).json({
+        message: 'User registered successfully. Email verification skipped (not configured).',
+        user,
+        emailVerificationSkipped: true
+      });
+      return;
+    }
 
     res.status(201).json({
       message: 'User registered successfully. Please check your email for the verification code.',
