@@ -13,21 +13,32 @@ const router = express.Router();
 
 // Validation schema
 const createInterviewSchema = Joi.object({
-  title: Joi.string().min(3).required(),
+  title:       Joi.string().min(3).required(),
   description: Joi.string().optional(),
-  role: Joi.string().required(),
-  level: Joi.string().valid("junior", "mid", "senior").required(),
-  duration: Joi.number().min(1).max(120).required(),
-  questions: Joi.array().items(Joi.string()).min(1).required(),
-  password: Joi.string().min(4).max(32).required(), // interviewer sets password
-  // Scheduling fields - explicitly allow these
-  isScheduled: Joi.boolean().optional(),
-  scheduledStartTime: Joi.date().allow(null).optional(),
-  scheduledEndTime: Joi.date().allow(null).optional(),
-  timeZone: Joi.string().optional(),
-  requiresSchedule: Joi.boolean().optional(),
-  allowMultipleAttempts: Joi.boolean().optional()
-}).unknown(true); // Allow unknown fields
+  role:        Joi.string().required(),
+  level:       Joi.string().valid('junior', 'mid', 'senior').required(),
+  duration:    Joi.number().min(1).max(120).required(),
+  // Accept questions as plain strings OR MCQ objects {question, options, correctAnswer}
+  questions:   Joi.array().items(
+    Joi.alternatives().try(
+      Joi.string(),
+      Joi.object({
+        question:      Joi.string().required(),
+        text:          Joi.string().optional(),
+        options:       Joi.array().items(Joi.string()).optional(),
+        correctAnswer: Joi.string().optional(),
+      }).unknown(true)
+    )
+  ).min(1).required(),
+  password:    Joi.string().min(4).max(32).required(),
+  // Scheduling fields
+  isScheduled:           Joi.boolean().optional(),
+  scheduledStartTime:    Joi.date().allow(null).optional(),
+  scheduledEndTime:      Joi.date().allow(null).optional(),
+  timeZone:              Joi.string().optional(),
+  requiresSchedule:      Joi.boolean().optional(),
+  allowMultipleAttempts: Joi.boolean().optional(),
+}).unknown(true);
 
 // ✅ Get all interviews
 router.get("/", async (req, res) => {
@@ -70,23 +81,28 @@ router.get("/:id", async (req, res) => {
     if (!interviewDoc) {
       return res.status(404).json({ error: "Interview not found" });
     }
-    const questions = await Question.find({ interviewId: id, isActive: true }).sort({ number: 1 }).lean();
+    const questions = await Question.find({ interviewId: id, isActive: true })
+      .sort({ number: 1 })
+      .lean();
+
     const interview = {
-      id: interviewDoc._id.toString(),
-      title: interviewDoc.title,
+      id:          interviewDoc._id.toString(),
+      title:       interviewDoc.title,
       description: interviewDoc.description,
-      role: interviewDoc.role,
-      level: interviewDoc.level,
-      duration: interviewDoc.duration,
-      rubric: interviewDoc.rubric || {},
-      createdAt: interviewDoc.createdAt,
-      questions: questions.map(q => ({
-        id: q._id.toString(),
-        text: q.text,
-        type: q.type,
-        category: q.category,
-        difficulty: q.difficulty,
-        number: q.number
+      role:        interviewDoc.role,
+      level:       interviewDoc.level,
+      duration:    interviewDoc.duration,
+      rubric:      interviewDoc.rubric || {},
+      createdAt:   interviewDoc.createdAt,
+      questions:   questions.map(q => ({
+        id:            q._id.toString(),
+        text:          q.text,
+        type:          q.type,          // 'mcq' | 'text'
+        category:      q.category,
+        difficulty:    q.difficulty,
+        number:        q.number,
+        options:       q.options || [], // MCQ options
+        correctAnswer: q.correctAnswer || null,
       }))
     };
 
@@ -127,7 +143,9 @@ router.get('/:id/responses', async (req, res) => {
       interviewId: r.interviewId,
       sessionId: r.sessionId,
       questionId: r.questionId,
-      text: r.text,
+      answerText: r.answerText || r.text, // support both old and new schema
+      audioUrl: r.audioUrl,
+      score: r.score,
       audioData: r.audioData ? r.audioData.toString('base64') : null,
       createdAt: r.createdAt,
       user: userMap.get(r.userId),
@@ -196,32 +214,56 @@ router.post("/", async (req, res) => {
       requiresSchedule: requiresSchedule || false,
       allowMultipleAttempts: allowMultipleAttempts || false,
     });
-    const questionDocs = await Question.insertMany(questions.map((q, i) => ({
-      text: q,
-      type: 'technical',
-      category: 'general',
-      difficulty: level,
-      number: i + 1,
-      interviewId: createdInterview._id.toString(),
-    })));
+    // Normalise each question: handle both plain strings and MCQ objects
+    const normalisedQuestions = questions.map((q, i) => {
+      if (typeof q === 'string') {
+        return {
+          text:          q,
+          type:          'text',
+          category:      'general',
+          difficulty:    level,
+          number:        i + 1,
+          interviewId:   createdInterview._id.toString(),
+          options:       [],
+          correctAnswer: null,
+        };
+      }
+      // MCQ object from generateQuestions route: { question, options, correctAnswer }
+      const questionText = q.question || q.text || `Question ${i + 1}`;
+      const hasMCQ = Array.isArray(q.options) && q.options.length > 0;
+      return {
+        text:          questionText,
+        type:          hasMCQ ? 'mcq' : 'text',
+        category:      'general',
+        difficulty:    level,
+        number:        i + 1,
+        interviewId:   createdInterview._id.toString(),
+        options:       q.options       || [],
+        correctAnswer: q.correctAnswer || null,
+      };
+    });
+
+    const questionDocs = await Question.insertMany(normalisedQuestions);
     const interview = {
-      id: createdInterview._id.toString(),
-      title: createdInterview.title,
+      id:          createdInterview._id.toString(),
+      title:       createdInterview.title,
       description: createdInterview.description,
-      role: createdInterview.role,
-      level: createdInterview.level,
-      duration: createdInterview.duration,
-      rubric: createdInterview.rubric,
-      code: createdInterview.code,
-      password: createdInterview.password,
-      createdAt: createdInterview.createdAt,
-      questions: questionDocs.map(q => ({
-        id: q._id.toString(),
-        text: q.text,
-        type: q.type,
-        category: q.category,
-        difficulty: q.difficulty,
-        number: q.number,
+      role:        createdInterview.role,
+      level:       createdInterview.level,
+      duration:    createdInterview.duration,
+      rubric:      createdInterview.rubric,
+      code:        createdInterview.code,
+      password:    createdInterview.password,
+      createdAt:   createdInterview.createdAt,
+      questions:   questionDocs.map(q => ({
+        id:            q._id.toString(),
+        text:          q.text,
+        type:          q.type,
+        category:      q.category,
+        difficulty:    q.difficulty,
+        number:        q.number,
+        options:       q.options       || [],
+        correctAnswer: q.correctAnswer || null,
       })),
     };
 

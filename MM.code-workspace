@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "MockMate",
+			"path": "../../MockMate"
+		}
+	],
+	"settings": {}
+}

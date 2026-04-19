@@ -24,6 +24,36 @@ export default function InterviewerDashboard() {
   const [selectedInterview, setSelectedInterview] = useState<any>(null);
   const [schedulingDialog, setSchedulingDialog] = useState(false);
   const [scoreResults, setScoreResults] = useState<any>(null);
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+
+  // Group responses by sessionId
+  const groupedResponses = Object.values(responses.reduce((acc, r) => {
+    if (!acc[r.sessionId]) {
+      acc[r.sessionId] = {
+        sessionId: r.sessionId,
+        candidateName: r.user?.name || r.user?.email || 'Unknown',
+        time: r.createdAt,
+        totalQuestions: 0,
+        correctMcqCount: 0,
+        mcqCount: 0,
+        responses: []
+      };
+    }
+    const group = acc[r.sessionId];
+    group.responses.push(r);
+    group.totalQuestions++;
+    
+    // Simple Score Logic for MCQs
+    if (r.question?.type === 'mcq' || (r.question?.options && r.question.options.length > 0)) {
+      group.mcqCount++;
+      const selected = r.answerText?.charAt(0).toLowerCase();
+      const correct = r.question.correctAnswer?.toLowerCase();
+      if (selected === correct && correct) {
+        group.correctMcqCount++;
+      }
+    }
+    return acc;
+  }, {} as Record<string, any>));
 
   useEffect(() => {
     fetchInterviews();
@@ -47,6 +77,7 @@ export default function InterviewerDashboard() {
       const res = await api.get(`/interviews/${interviewId}/responses`);
       setResponses(res.data.responses || []);
       setShowResponsesFor(interviewId);
+      setExpandedSessionId(null);
     } catch (error) {
       console.error('Error fetching responses:', error);
     } finally {
@@ -262,12 +293,12 @@ export default function InterviewerDashboard() {
         {/* Responses Modal */}
         {showResponsesFor && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
                 <h3 className="font-semibold">Responses</h3>
                 <Button variant="outline" size="sm" onClick={() => setShowResponsesFor(null)}>Close</Button>
               </div>
-              <div className="p-4 overflow-auto">
+              <div className="p-4 overflow-y-auto flex-1">
                 {responsesLoading ? (
                   <p>Loading...</p>
                 ) : responses.length === 0 ? (
@@ -275,11 +306,15 @@ export default function InterviewerDashboard() {
                 ) : (
                   <>
                     <div className="mb-4 flex justify-between items-center">
-                      <h3 className="text-lg font-semibold">Interview Responses</h3>
+                      <h3 className="text-lg font-semibold">
+                        {expandedSessionId ? 'Candidate Responses' : 'Interview Candidates'}
+                      </h3>
                       <div className="flex gap-2">
-                        <Button onClick={() => generateAI(responses[0]?.sessionId)} size="sm" variant="outline">
-                          Generate AI Scores
-                        </Button>
+                        {expandedSessionId && (
+                          <Button onClick={() => generateAI(expandedSessionId)} size="sm" variant="outline">
+                            Generate AI Scores
+                          </Button>
+                        )}
                         <Button 
                           size="sm" 
                           variant="outline"
@@ -292,7 +327,7 @@ export default function InterviewerDashboard() {
                     </div>
 
                     {/* AI Scoring Results */}
-                    {scoreResults && (
+                    {expandedSessionId && scoreResults && (
                       <Card className="mb-4">
                         <CardHeader>
                           <CardTitle className="flex items-center gap-2">
@@ -308,10 +343,10 @@ export default function InterviewerDashboard() {
                             </div>
                             <div>
                               <div className="text-sm">
-                                <strong>Strengths:</strong> {scoreResults.questionEvaluations[0]?.feedback?.strengths.join(', ')}
+                                <strong>Strengths:</strong> {scoreResults.questionEvaluations[0]?.feedback?.strengths?.join(', ')}
                               </div>
                               <div className="text-sm">
-                                <strong>Suggestions:</strong> {scoreResults.questionEvaluations[0]?.feedback?.suggestions.join(', ')}
+                                <strong>Suggestions:</strong> {scoreResults.questionEvaluations[0]?.feedback?.suggestions?.join(', ')}
                               </div>
                             </div>
                           </div>
@@ -319,86 +354,100 @@ export default function InterviewerDashboard() {
                       </Card>
                     )}
 
-                    <table className="min-w-full bg-white border rounded text-sm">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="px-3 py-2 text-left">Candidate</th>
-                          <th className="px-3 py-2 text-left">Question</th>
-                          <th className="px-3 py-2 text-left">Answer (text)</th>
-                          <th className="px-3 py-2 text-left">Audio</th>
-                          <th className="px-3 py-2 text-left">AI Score</th>
-                          <th className="px-3 py-2 text-left">Media</th>
-                          <th className="px-3 py-2 text-left">Time</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {responses.map((r, idx) => (
-                          <tr key={idx} className="border-t hover:bg-gray-50">
-                            <td className="px-3 py-2">{r.user?.name || r.user?.email}</td>
-                            <td className="px-3 py-2">{r.question?.number}. {r.question?.text}</td>
-                            <td className="px-3 py-2 whitespace-pre-wrap max-w-xs">{r.text || '-'}</td>
-                            <td className="px-3 py-2">
-                              {r.audioData ? (
-                                <div className="flex items-center space-x-2">
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline"
-                                    onClick={() => playAudioBase64(r.audioData)}
-                                    className="flex items-center gap-1"
-                                  >
-                                    <Play className="h-3 w-3" />
-                                    Play
-                                  </Button>
-                                  <span className="text-xs text-gray-500">
-                                    {Math.round(r.audioData.length / 1024)}KB
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-gray-400">No audio</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2">
-                              {r.aiScore ? (
-                                <Badge variant={r.aiScore >= 70 ? "default" : r.aiScore >= 50 ? "secondary" : "destructive"}>
-                                  {r.aiScore}/100
-                                </Badge>
-                              ) : (
-                                <span className="text-gray-400">Not scored</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2">
-                              <div className="flex gap-1">
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  onClick={() => downloadMedia(r.sessionId, 'audio')}
-                                  disabled={!r.audioData}
-                                  className="flex items-center gap-1"
-                                >
-                                  <Download className="h-3 w-3" />
-                                  Audio
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline"
-                                  onClick={() => downloadMedia(r.sessionId, 'video')}
-                                  className="flex items-center gap-1"
-                                >
-                                  <Download className="h-3 w-3" />
-                                  Video
-                                </Button>
-                              </div>
-                            </td>
-                            <td className="px-3 py-2">
-                              <div className="flex items-center gap-1">
-                                <Clock className="h-3 w-3 text-gray-400" />
-                                {new Date(r.createdAt).toLocaleString()}
-                              </div>
-                            </td>
+                    {!expandedSessionId ? (
+                      // --- Grouped Candidates Table ---
+                      <table className="min-w-full bg-white border rounded text-sm">
+                        <thead>
+                          <tr className="bg-gray-50">
+                            <th className="px-3 py-2 text-left">Candidate</th>
+                            <th className="px-3 py-2 text-left">Attempted</th>
+                            <th className="px-3 py-2 text-left">MCQ Score</th>
+                            <th className="px-3 py-2 text-left">Time</th>
+                            <th className="px-3 py-2 text-left">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {groupedResponses.map((group: any, idx) => (
+                            <tr key={idx} className="border-t hover:bg-gray-50">
+                              <td className="px-3 py-2 font-medium">{group.candidateName}</td>
+                              <td className="px-3 py-2">{group.totalQuestions} questions</td>
+                              <td className="px-3 py-2">
+                                {group.mcqCount > 0 ? (
+                                  <Badge variant={group.correctMcqCount === group.mcqCount ? "default" : "secondary"}>
+                                    {group.correctMcqCount} / {group.mcqCount}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-gray-400">N/A</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-gray-500">
+                                {new Date(group.time).toLocaleString()}
+                              </td>
+                              <td className="px-3 py-2">
+                                <Button size="sm" variant="outline" onClick={() => setExpandedSessionId(group.sessionId)}>
+                                  View Details
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      // --- Detailed Responses Table ---
+                      <div>
+                        <Button variant="ghost" size="sm" onClick={() => setExpandedSessionId(null)} className="mb-4">
+                          ← Back to Candidates
+                        </Button>
+                        <table className="min-w-full bg-white border rounded text-sm">
+                          <thead>
+                            <tr className="bg-gray-50">
+                              <th className="px-3 py-2 text-left">Question</th>
+                              <th className="px-3 py-2 text-left">Answer</th>
+                              <th className="px-3 py-2 text-left">Result (MCQ)</th>
+                              <th className="px-3 py-2 text-left">Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {responses.filter(r => r.sessionId === expandedSessionId).map((r, idx) => {
+                              const isMCQ = r.question?.type === 'mcq' || (r.question?.options && r.question.options.length > 0);
+                              let isCorrect = false;
+                              if (isMCQ) {
+                                isCorrect = r.answerText?.charAt(0).toLowerCase() === r.question.correctAnswer?.toLowerCase();
+                              }
+                              
+                              return (
+                                <tr key={idx} className="border-t hover:bg-gray-50">
+                                  <td className="px-3 py-2 max-w-xs">
+                                    <div className="font-medium text-gray-900">{r.question?.number}. {r.question?.text}</div>
+                                    {isMCQ && (
+                                      <div className="text-xs text-gray-500 mt-1">
+                                        Correct: {r.question.correctAnswer?.toUpperCase()}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 whitespace-pre-wrap max-w-xs">{r.answerText || r.text || '-'}</td>
+                                  <td className="px-3 py-2">
+                                    {isMCQ ? (
+                                      <Badge variant={isCorrect ? "default" : "destructive"}>
+                                        {isCorrect ? 'Correct' : 'Incorrect'}
+                                      </Badge>
+                                    ) : (
+                                      r.score !== undefined ? <Badge>{r.score}/100</Badge> : <span className="text-gray-400">N/A</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex items-center gap-1">
+                                      <Clock className="h-3 w-3 text-gray-400" />
+                                      {new Date(r.createdAt).toLocaleString()}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

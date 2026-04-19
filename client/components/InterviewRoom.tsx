@@ -1,36 +1,31 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { 
   Mic, 
-  MicOff, 
   Volume2, 
   VolumeX, 
   Square, 
-  Play, 
-  Pause,
   MessageSquare,
-  Clock,
-  CheckCircle,
-  AlertCircle,
   Brain,
   HelpCircle
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { socketService } from '@/lib/socket'
 import { api } from '@/lib/api'
-import axios from 'axios'
-import dynamic from 'next/dynamic'
 import { useAuth } from '@/contexts/AuthContext'
+import VoiceInteractionPanel from '@/components/VoiceInteractionPanel'
 
 interface Question {
-  id: string
-  text: string
-  number: number
+  id:            string
+  text:          string
+  number:        number
+  type:          string        // 'mcq' | 'text' | 'code'
+  options:       string[]     // e.g. ['a) Yes', 'b) No', 'c) Maybe', 'd) Never']
+  correctAnswer: string | null
 }
 
 interface Interview {
@@ -62,6 +57,8 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const [isPlaying, setIsPlaying] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [typedResponse, setTypedResponse] = useState('')
+  // MCQ: track selected option per question id
+  const [mcqAnswers, setMcqAnswers] = useState<Record<string, string>>({})
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [answeredByQuestionId, setAnsweredByQuestionId] = useState<Record<string, boolean>>({})
   const [draftAnswersByQuestionId, setDraftAnswersByQuestionId] = useState<Record<string, string>>({})
@@ -72,21 +69,11 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const [questionStartTime, setQuestionStartTime] = useState<Date | null>(null)
   const [timeSpentPerQuestion, setTimeSpentPerQuestion] = useState<Record<string, number>>({})
   const [isCompleted, setIsCompleted] = useState(false)
-  const [incidentCount, setIncidentCount] = useState(0)
-  const [incidents, setIncidents] = useState<Array<{type: string, meta: any, timestamp: Date}>>([])
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
-  const [pythonCommand, setPythonCommand] = useState<string | null>(null)
   const [interviewScheduledTime, setInterviewScheduledTime] = useState<{start: Date | null, end: Date | null}>({start: null, end: null})
-  const [showFaceDetection, setShowFaceDetection] = useState(false)
-  const [faceDetectionStatus, setFaceDetectionStatus] = useState<string>('Initializing...')
-  const [faceCount, setFaceCount] = useState(0)
-  const INCIDENT_THRESHOLD = 5
-  const cameraStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
-  const faceCountRef = useRef<number>(0)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -95,13 +82,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const pendingJoinSessionIdRef = useRef<string | null>(null)
 
-  // Strict mode configuration - enabled for anti-cheating
-  const STRICT_MODE = true
-  const fatalIncidents = new Set([
-    'multiple_faces_detected',
-    'speech_with_multiple_faces',
-    'devtools_suspected'
-  ])
+
 
   const emitWhenConnected = (event: string, payload: any, attempt: number = 0) => {
     if (socketService.isConnected()) {
@@ -127,36 +108,14 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   useEffect(() => {
     const ensurePermissions = async () => {
       try {
-        // Request mic + cam up-front to simulate real proctored environment
-        const cam = navigator.mediaDevices.getUserMedia({ video: true })
-        const mic = navigator.mediaDevices.getUserMedia({ audio: true })
-        await Promise.allSettled([cam, mic])
+        await navigator.mediaDevices.getUserMedia({ audio: true })
       } catch (_) {
-        toast.error('Camera/Microphone permission required for proctored interview')
-      }
-    }
-
-    const enterFullscreen = async () => {
-      try {
-        if (document.documentElement.requestFullscreen) {
-          await document.documentElement.requestFullscreen();
-          toast.success('Fullscreen mode enabled for secure interview');
-        }
-      } catch (error) {
-        console.warn('Fullscreen request failed:', error);
-        toast.error('Fullscreen is required for this interview. Please enable it manually.');
-        // Give user a chance to enable fullscreen manually
-        setTimeout(() => {
-          if (!document.fullscreenElement) {
-            toast.error('Please enable fullscreen mode to continue the interview');
-          }
-        }, 3000);
+        toast.error('Microphone permission required for interview')
       }
     }
 
     const boot = async () => {
       await ensurePermissions();
-      await enterFullscreen();
       initializeSocket();
       startSession();
       startTimer();
@@ -176,341 +135,11 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
       }
     }
 
-    window.addEventListener('beforeunload', handleBeforeUnload)
-
-    // Strict mode: fullscreen exit listener
-    const onFullscreenChange = () => {
-      const inFs = !!document.fullscreenElement;
-      if (!inFs && STRICT_MODE && !isCompleted) {
-        reportIncident('fullscreen_exit');
-        // Immediate warning
-        toast.error('Fullscreen exit detected! Please return to fullscreen immediately.');
-        // Give user 3 seconds to return to fullscreen
-        setTimeout(() => {
-          if (!document.fullscreenElement && !isCompleted) {
-            toast.error('Interview terminated due to fullscreen exit.');
-            completeInterview('fullscreen_exit');
-          }
-        }, 3000); // 3 seconds to return to fullscreen
-      }
-    };
-    document.addEventListener('fullscreenchange', onFullscreenChange);
-
     return () => {
-      cleanup();
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      cleanup()
     }
-  // Prevent exiting fullscreen until interview is complete
-  useEffect(() => {
-    if (!isCompleted && STRICT_MODE) {
-      const preventKey = (e: KeyboardEvent) => {
-        // Prevent ESC key
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      };
-      window.addEventListener('keydown', preventKey, true);
-      return () => window.removeEventListener('keydown', preventKey, true);
-    }
-  }, [isCompleted]);
   }, [])
-
-  // Proctoring: report helper
-  const reportIncident = (type: string, meta: Record<string, any> = {}) => {
-    try {
-      setIncidentCount((c) => c + 1)
-      if (sessionId) {
-        emitWhenConnected('proctor_event', {
-          sessionId,
-          type,
-          meta,
-          at: new Date().toISOString()
-        })
-      }
-      // If too many incidents, auto-complete
-      setTimeout(() => {
-        if (STRICT_MODE && fatalIncidents.has(type)) {
-          toast.error('🚨 STRICT VIOLATION DETECTED! Ending interview immediately.', {
-            duration: 8000,
-            style: {
-              background: '#fee2e2',
-              color: '#dc2626',
-              border: '3px solid #ef4444',
-              fontSize: '18px',
-              fontWeight: 'bold'
-            }
-          });
-          emitWhenConnected('proctor_threshold_breach', {
-            sessionId,
-            incidents: incidentCount + 1,
-            reason: type
-          })
-          completeInterview()
-          return
-        }
-        if (!isCompleted && (incidentCount + 1 >= INCIDENT_THRESHOLD)) {
-          toast.error('🚨 TOO MANY INCIDENTS! Interview terminated due to multiple violations.', {
-            duration: 8000,
-            style: {
-              background: '#fee2e2',
-              color: '#dc2626',
-              border: '3px solid #ef4444',
-              fontSize: '18px',
-              fontWeight: 'bold'
-            }
-          });
-          emitWhenConnected('proctor_threshold_breach', {
-            sessionId,
-            incidents: incidentCount + 1
-          })
-          completeInterview()
-        }
-      }, 0)
-    } catch (err) {
-      console.warn('Failed to report proctor incident', err)
-    }
-  }
-
-  // Proctoring: listeners (tab switch, copy/paste, context menu, devtools)
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.hidden) {
-        reportIncident('tab_hidden')
-        if (STRICT_MODE) {
-          // Immediate warning
-          toast.error('Tab switch detected! Please return to the interview tab immediately.');
-          // Give user 2 seconds to return
-          setTimeout(() => {
-            if (document.hidden && !isCompleted) {
-              toast.error('Interview terminated due to tab switch.');
-              completeInterview('tab_change')
-              window.location.href = '/dashboard'
-            }
-          }, 2000); // 2 seconds to return
-        }
-      }
-    }
-    const onBlur = () => {
-      reportIncident('window_blur')
-      if (STRICT_MODE) {
-        // Immediate warning
-        toast.error('Window focus lost! Please return focus immediately.');
-        // Give user 2 seconds to return focus
-        setTimeout(() => {
-          if (!document.hasFocus() && !isCompleted) {
-            toast.error('Interview terminated due to focus loss.');
-            completeInterview('tab_change')
-            window.location.href = '/dashboard'
-          }
-        }, 2000); // 2 seconds to return focus
-      }
-    }
-    const onCopy = (e: ClipboardEvent) => reportIncident('copy', { length: (e as any).clipboardData?.getData('text')?.length })
-    const onPaste = (e: ClipboardEvent) => reportIncident('paste', { length: (e as any).clipboardData?.getData('text')?.length })
-    const onContext = (e: MouseEvent) => reportIncident('contextmenu')
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'v' || e.key === 'x')) {
-        reportIncident('shortcut', { key: e.key })
-      }
-    }
-    // Devtools heuristic: large devtools gap
-    const checkDevtools = () => {
-      const gap = Math.abs((window.outerWidth - window.innerWidth)) + Math.abs((window.outerHeight - window.innerHeight))
-      if (gap > 200) {
-        reportIncident('devtools_suspected', { gap })
-      }
-    }
-    const devtoolsInterval = window.setInterval(checkDevtools, 5000)
-
-    document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('blur', onBlur)
-    window.addEventListener('copy', onCopy as any)
-    window.addEventListener('paste', onPaste as any)
-    window.addEventListener('contextmenu', onContext)
-    window.addEventListener('keydown', onKey)
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('blur', onBlur)
-      window.removeEventListener('copy', onCopy as any)
-      window.removeEventListener('paste', onPaste as any)
-      window.removeEventListener('contextmenu', onContext)
-      window.removeEventListener('keydown', onKey)
-      window.clearInterval(devtoolsInterval)
-    }
-  }, [sessionId])
-
-  // Webcam-based face presence (best-effort)
-  useEffect(() => {
-    let visionInterval: number | null = null
-    const startVision = async () => {
-      try {
-        setFaceDetectionStatus('Starting camera...')
-        // Try using FaceDetector API if available
-        const FaceDetectorCtor: any = (window as any).FaceDetector
-        // Ensure camera stream
-        if (!cameraStreamRef.current) {
-          cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        }
-        
-        // Set up video element for display
-        if (videoRef.current) {
-          videoRef.current.srcObject = cameraStreamRef.current
-          videoRef.current.muted = true
-          await videoRef.current.play()
-        }
-        
-        setFaceDetectionStatus('Camera ready')
-        setShowFaceDetection(true)
-
-        if (FaceDetectorCtor) {
-          const detector = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 3 })
-          const tick = async () => {
-            try {
-              const faces = await detector.detect(videoRef.current!)
-              const count = Array.isArray(faces) ? faces.length : 0
-              faceCountRef.current = count
-              setFaceCount(count)
-              
-              if (count === 0) {
-                setFaceDetectionStatus('No face detected')
-                reportIncident('no_face_detected')
-              } else if (count > 1) {
-                setFaceDetectionStatus(`Multiple faces detected (${count})`)
-                reportIncident('multiple_faces_detected', { count })
-              } else {
-                setFaceDetectionStatus('Face detected - Good')
-              }
-            } catch (e) {
-              setFaceDetectionStatus('Detection error')
-              // ignore detection errors
-            }
-          }
-          
-          visionInterval = window.setInterval(tick, 2000)
-          return
-        }
-
-        // Fallback: TensorFlow.js BlazeFace via CDN
-        const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
-          const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null
-          if (existing) {
-            if ((existing as any)._loaded) return resolve()
-            existing.addEventListener('load', () => resolve())
-            existing.addEventListener('error', () => reject(new Error('script load error')))
-            return
-          }
-          const s = document.createElement('script')
-          s.src = src
-          s.async = true
-          ;(s as any)._loaded = false
-          s.onload = () => { (s as any)._loaded = true; resolve() }
-          s.onerror = () => reject(new Error('script load error'))
-          document.head.appendChild(s)
-        })
-
-        try {
-          await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js')
-          await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.js')
-          // @ts-ignore
-          const model = await (window as any).blazeface.load()
-          const tick = async () => {
-            try {
-              // @ts-ignore
-              const preds = await model.estimateFaces(video, false)
-              const count = Array.isArray(preds) ? preds.length : 0
-              faceCountRef.current = count
-              if (count === 0) {
-                reportIncident('no_face_detected')
-              } else if (count > 1) {
-                reportIncident('multiple_faces_detected', { count })
-              }
-            } catch (e) {
-              // ignore detection errors
-            }
-          }
-          visionInterval = window.setInterval(tick, 5000)
-        } catch (e) {
-          // Fallback load failed; silently ignore
-        }
-      } catch (err) {
-        // Camera permission denied or unsupported; ignore silently
-      }
-    }
-
-    startVision()
-
-    return () => {
-      if (visionInterval) window.clearInterval(visionInterval)
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach(t => t.stop())
-        cameraStreamRef.current = null
-      }
-    }
-  }, [sessionId])
-
-  // Audio analysis: detect speech when no face or multiple faces
-  useEffect(() => {
-    let audioInterval: number | null = null
-    const startAudioAnalysis = async () => {
-      try {
-        // Reuse existing audio stream if available
-        if (!streamRef.current) {
-          // If not yet captured, try to get mic access (best-effort)
-          try {
-            streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-          } catch (_) {
-            return
-          }
-        }
-        const context = new (window.AudioContext || (window as any).webkitAudioContext)()
-        audioContextRef.current = context
-        const source = context.createMediaStreamSource(streamRef.current)
-        const analyser = context.createAnalyser()
-        analyser.fftSize = 1024
-        analyserRef.current = analyser
-        source.connect(analyser)
-        const data = new Uint8Array(analyser.frequencyBinCount)
-
-        const check = () => {
-          if (!analyserRef.current) return
-          analyserRef.current.getByteTimeDomainData(data)
-          // Compute RMS
-          let sum = 0
-          for (let i = 0; i < data.length; i++) {
-            const v = (data[i] - 128) / 128
-            sum += v * v
-          }
-          const rms = Math.sqrt(sum / data.length)
-          const speaking = rms > 0.06 // heuristic threshold
-          if (speaking) {
-            const faces = faceCountRef.current
-            if (faces === 0) {
-              reportIncident('speech_without_face')
-            } else if (faces > 1) {
-              reportIncident('speech_with_multiple_faces', { faces })
-            }
-          }
-        }
-
-        audioInterval = window.setInterval(check, 2000)
-      } catch (err) {
-        // ignore
-      }
-    }
-
-    startAudioAnalysis()
-
-    return () => {
-      if (audioInterval) window.clearInterval(audioInterval)
-      if (audioContextRef.current) {
-        try { audioContextRef.current.close() } catch (_) {}
-        audioContextRef.current = null
-      }
-    }
-  }, [sessionId])
 
   useEffect(() => {
     if (interview.questions && interview.questions.length > 0) {
@@ -544,12 +173,16 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   const goToNextQuestion = async () => {
     if (!interview.questions || interview.questions.length === 0) return
 
-    const currentQ = interview.questions[currentQuestionIndex]
     if (typedResponse.trim() && currentQuestionId) {
       sendTextMessage(typedResponse.trim())
       setTypedResponse('')
-      // Clear draft when answer is submitted
+      // Clear draft + MCQ selection when answer is submitted
       setDraftAnswersByQuestionId(prev => ({ ...prev, [currentQuestionId]: '' }))
+      setMcqAnswers(prev => {
+        const next = { ...prev }
+        delete next[currentQuestionId]
+        return next
+      })
     }
 
     // Move to next if exists
@@ -667,58 +300,6 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
           text: firstQuestion || 'Welcome! Let\'s begin the interview. Please introduce yourself.',
           timestamp: new Date()
         }])
-        // Automatically launch Python cheating detection script for real-time monitoring
-        const serverUrl = 'http://localhost:5000' // Server URL for Python script to connect to /proctor namespace
-        try {
-          const response = await fetch('http://localhost:3001/run-python', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sessionId: data.sessionId,
-              serverUrl: serverUrl,
-              strict: true // Enable strict mode for real-time detection
-            }),
-          })
-          if (response.ok) {
-            const result = await response.json()
-            console.log('✅ Real-time Python cheating detection launched:', result)
-            toast.success('Real-time cheating detection activated')
-            
-            // Check status periodically
-            const checkStatus = async () => {
-              try {
-                const statusResponse = await fetch(`http://localhost:3001/status/${data.sessionId}`)
-                if (statusResponse.ok) {
-                  const status = await statusResponse.json()
-                  if (!status.isRunning) {
-                    console.warn('⚠️ Python cheating detection stopped unexpectedly')
-                    toast.error('Cheating detection stopped. Please refresh the page.')
-                  }
-                }
-              } catch (err) {
-                console.warn('Failed to check cheating detection status:', err)
-              }
-            }
-            
-            // Check status every 30 seconds
-            const statusInterval = setInterval(checkStatus, 30000)
-            
-            // Clean up interval when component unmounts
-            return () => clearInterval(statusInterval)
-          } else {
-            console.error('❌ Failed to launch Python script:', response.statusText)
-            toast.error('Failed to activate real-time cheating detection. Please run the command manually.')
-            // Fallback: set the command for manual execution
-            setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl} --strict`)
-          }
-        } catch (error) {
-          console.error('❌ Error launching Python script:', error)
-          toast.error('Failed to activate real-time cheating detection. Please run the command manually.')
-          // Fallback: set the command for manual execution
-          setPythonCommand(`python cheating_detection.py --session-id ${data.sessionId} --server-url ${serverUrl} --strict`)
-        }
         // Scroll to bottom after setting messages
         setTimeout(() => {
           const container = document.querySelector('.space-y-4.max-h-96.overflow-y-auto')
@@ -751,20 +332,6 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
 
       socketService.on('ai_audio', (data: { audioData: string }) => {
         playAudio(data.audioData)
-      })
-
-      socketService.on('proctor_detection', (data: { type: string, meta: any, at: number }) => {
-        const incident = {
-          type: data.type,
-          meta: data.meta,
-          timestamp: new Date(data.at * 1000)
-        }
-        setIncidents(prev => {
-          const newIncidents = [...prev, incident]
-          return newIncidents.length > 10 ? newIncidents.slice(-10) : newIncidents
-        })
-        setIncidentCount(prev => prev + 1)
-        console.log('Proctor detection received:', data)
       })
 
       socketService.on('interview_completed', (data: any) => {
@@ -899,6 +466,8 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
   }, [sessionId, isCompleted])
 
   const startTimer = () => {
+    // Guard: only start one interval (React 18 Strict Mode runs effects twice in dev)
+    if (intervalRef.current) return
     intervalRef.current = setInterval(() => {
       setElapsedTime(prev => prev + 1)
     }, 1000)
@@ -1039,37 +608,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     }
   }
 
-  const launchPythonCheatingDetection = async (sessionId: string) => {
-    const serverUrl = 'http://localhost:5000' // Server URL for Python script to connect to /proctor namespace
-    try {
-      const response = await fetch('http://localhost:3001/run-python', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sessionId: sessionId,
-          serverUrl: serverUrl,
-          strict: true // Enable strict mode for real-time detection
-        }),
-      })
-      if (response.ok) {
-        const result = await response.json()
-        console.log('✅ Python cheating detection launched:', result)
-        toast.success('Cheating detection activated')
-      } else {
-        console.error('❌ Failed to launch Python script:', response.statusText)
-        toast.error('Failed to activate cheating detection. Please run the command manually.')
-        // Fallback: set the command for manual execution
-        setPythonCommand(`python cheating_detection.py --session-id ${sessionId} --server-url ${serverUrl} --strict`)
-      }
-    } catch (error) {
-      console.error('❌ Error launching Python script:', error)
-      toast.error('Failed to activate cheating detection. Please run the command manually.')
-      // Fallback: set the command for manual execution
-      setPythonCommand(`python cheating_detection.py --session-id ${sessionId} --server-url ${serverUrl} --strict`)
-    }
-  }
+
 
   const completeInterview = async (reason?: string) => {
     console.log('🔄 Complete interview called. Current sessionId:', sessionId)
@@ -1101,33 +640,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
     setIsCompleted(true);
     toast.success('Completing interview...');
 
-    // Stop Python cheating detection script
-    try {
-      const stopResponse = await fetch('http://localhost:3001/stop-python', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sessionId: sessionId
-        }),
-      })
 
-      if (stopResponse.ok) {
-        console.log('✅ Python cheating detection stopped successfully')
-        toast.success('Cheating detection stopped')
-      } else {
-        console.warn('⚠️ Failed to stop Python script:', stopResponse.statusText)
-      }
-    } catch (error) {
-      console.error('❌ Error stopping Python script:', error)
-      // Don't fail the interview completion if we can't stop the Python script
-    }
-
-    // After stopping, run cheating detection again in the interview room
-    if (sessionId) {
-      await launchPythonCheatingDetection(sessionId);
-    }
 
     // Emit complete interview event
     emitWhenConnected('complete_interview', {
@@ -1166,26 +679,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
       mediaRecorderRef.current.stop()
     }
     
-    // Stop Python cheating detection script on cleanup
-    if (sessionId) {
-      try {
-        const stopResponse = await fetch('http://localhost:3001/stop-python', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sessionId: sessionId
-          }),
-        })
-        
-        if (stopResponse.ok) {
-          console.log('✅ Python cheating detection stopped on cleanup')
-        }
-      } catch (error) {
-        console.warn('⚠️ Failed to stop Python script on cleanup:', error)
-      }
-    }
+
     
     socketService.disconnect()
   }
@@ -1316,10 +810,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
                 <div className="text-sm text-gray-500 font-medium">Progress</div>
                 <div className="text-xl font-bold text-gray-900">{currentQuestionIndex + 1}/{interview.questions?.length || 0}</div>
               </div>
-              <div className="text-center">
-                <div className="text-sm text-gray-500 font-medium">Incidents</div>
-                <div className={`text-xl font-bold ${incidentCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{incidentCount}</div>
-              </div>
+
               <Badge 
                 variant={isConnected ? 'default' : 'destructive'}
                 className={`px-3 py-1 ${isConnected ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200'}`}
@@ -1378,35 +869,67 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Answer</h3>
 
-              {/* Text Response */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Type your response
-                  </label>
-                  <textarea
-                    value={typedResponse}
-                    onChange={(e) => setTypedResponse(e.target.value)}
-                    placeholder="Type your response here..."
-                    className="w-full border border-gray-300 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                    rows={4}
-                  />
-                </div>
+              {/* ── MCQ: show radio options when question has options ── */}
+              {(() => {
+                const q = interview.questions?.[currentQuestionIndex]
+                const isMCQ = q?.type === 'mcq' || (q?.options && q.options.length > 0)
+                const selectedOption = currentQuestionId ? mcqAnswers[currentQuestionId] : undefined
 
-                {/* <Button
-                  onClick={() => {
-                    const text = typedResponse
-                    if (text.trim()) {
-                      sendTextMessage(text)
-                      setTypedResponse('')
-                    }
-                  }}
-                  className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  Send Response
-                </Button> */}
-              </div>
+                if (isMCQ && q?.options?.length) {
+                  return (
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-gray-600 mb-3">Select the best answer:</p>
+                      {q.options.map((option, optIdx) => {
+                        const optionKey = option.charAt(0).toLowerCase() // 'a', 'b', 'c', 'd'
+                        const isSelected = selectedOption === optionKey
+                        return (
+                          <label
+                            key={optIdx}
+                            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all duration-150 ${
+                              isSelected
+                                ? 'border-blue-500 bg-blue-50 shadow-sm'
+                                : 'border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50/40'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name={`mcq_${currentQuestionId}`}
+                              value={optionKey}
+                              checked={isSelected}
+                              onChange={() => {
+                                if (!currentQuestionId) return
+                                setMcqAnswers(prev => ({ ...prev, [currentQuestionId]: optionKey }))
+                                // Also set as typed response so goToNextQuestion / sendTextMessage picks it up
+                                setTypedResponse(option)
+                              }}
+                              className="mt-0.5 accent-blue-600"
+                            />
+                            <span className={`text-sm font-medium ${ isSelected ? 'text-blue-800' : 'text-gray-700' }`}>
+                              {option}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )
+                }
+
+                // ── Text / open-ended question ──
+                return (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Type your response
+                    </label>
+                    <textarea
+                      value={typedResponse}
+                      onChange={(e) => setTypedResponse(e.target.value)}
+                      placeholder="Type your response here..."
+                      className="w-full border border-gray-300 rounded-xl p-4 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                      rows={4}
+                    />
+                  </div>
+                )
+              })()}
 
               {/* Next Question Button */}
               <div className="mt-6 pt-6 border-t border-gray-200">
@@ -1472,91 +995,48 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
 
           {/* Right Column - Controls */}
           <div className="space-y-6">
-            {/* Audio Controls */}
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Audio Controls</h3>
-
-              {/* Recording Status */}
-              <div className="mb-6">
-                {isRecording ? (
-                  <div className="flex items-center justify-center space-x-3 p-4 bg-red-50 rounded-xl border border-red-200">
-                    <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
-                    <span className="text-red-700 font-medium">Recording in progress...</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center space-x-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                    <Mic className="h-5 w-5 text-gray-500" />
-                    <span className="text-gray-600">Ready to record</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Record Button */}
-              <Button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`w-full h-14 text-lg font-semibold rounded-xl transition-all duration-200 ${
-                  isRecording
-                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl'
-                    : 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {isRecording ? (
-                  <>
-                    <Square className="h-5 w-5 mr-2" />
-                    Stop Recording
-                  </>
-                ) : (
-                  <>
-                    <Mic className="h-5 w-5 mr-2" />
-                    Start Recording
-                  </>
-                )}
-              </Button>
-
-              {/* Audio Status */}
-              <div className="mt-4 flex items-center justify-center space-x-2 text-sm">
-                {isPlaying ? (
-                  <>
-                    <Volume2 className="h-4 w-4 text-green-600" />
-                    <span className="text-green-600 font-medium">AI is speaking...</span>
-                  </>
-                ) : (
-                  <>
-                    <VolumeX className="h-4 w-4 text-gray-500" />
-                    <span className="text-gray-500">Silent mode</span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Python Cheating Detection */}
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Cheating Detection (Python)</h3>
-              <div className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200">
-                <div className="flex items-center justify-center space-x-2 mb-2">
-                  <CheckCircle className="h-5 w-5 text-green-600" />
-                  <span className="text-sm font-medium text-green-800">Automatic Launch Active</span>
+            {/* Voice Interaction Panel */}
+            {sessionId && currentQuestionId ? (
+              <VoiceInteractionPanel
+                sessionId={sessionId}
+                interviewId={interview.id}
+                questionId={currentQuestionId}
+                question={currentQuestion}
+                onComplete={({ transcript, audioUrl, evaluation }) => {
+                  // Show transcript as a candidate message in chat
+                  if (transcript) {
+                    setMessages(prev => [...prev, {
+                      type: 'candidate',
+                      text: `🎤 ${transcript}`,
+                      timestamp: new Date(),
+                    }])
+                  }
+                  // Mark question answered
+                  if (currentQuestionId) {
+                    setAnsweredByQuestionId(prev => ({ ...prev, [currentQuestionId]: true }))
+                  }
+                  toast.success(`Score: ${evaluation.score}/10 — see feedback in the panel`)
+                }}
+              />
+            ) : (
+              <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Voice Answer</h3>
+                <div className="flex items-center justify-center space-x-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                  <Mic className="h-5 w-5 text-gray-400" />
+                  <span className="text-gray-500 text-sm">Waiting for session…</span>
                 </div>
-                <p className="text-xs text-green-700 text-center">
-                  Python cheating detection script is launched automatically when entering the interview room.
-                </p>
               </div>
-              {pythonCommand && (
-                <div className="bg-yellow-50 rounded-xl p-4 mb-4 border border-yellow-200">
-                  <p className="text-sm text-yellow-700 mb-2">Fallback: If automatic launch fails, run this command manually:</p>
-                  <div className="bg-black text-green-400 rounded-lg p-3 font-mono text-xs overflow-x-auto">
-                    <code>{pythonCommand}</code>
-                  </div>
-                  <p className="text-xs text-yellow-600 mt-2">
-                    Ensure dependencies are installed: <code>pip install opencv-python mediapipe ultralytics python-socketio</code>.
-                  </p>
-                </div>
-              )}
-              <div className="flex items-center justify-center text-xs text-blue-600">
-                <AlertCircle className="h-4 w-4 mr-1" />
-                <span>Browser-based detection is active as fallback.</span>
+            )}
+
+            {/* AI Speaking indicator */}
+            {isPlaying && (
+              <div className="flex items-center justify-center gap-2 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3">
+                <Volume2 className="h-4 w-4 text-indigo-600 animate-pulse" />
+                <span className="text-indigo-700 text-sm font-medium">AI is speaking…</span>
               </div>
-            </div>
+            )}
+
+
 
             {/* Interview Details */}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-6">
@@ -1589,32 +1069,7 @@ export default function InterviewRoom({ interview, sessionId: propSessionId, onC
           </div>
         </div>
 
-        {/* Face Detection Display */}
-        {showFaceDetection && (
-          <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-10">
-            <div className="flex items-center space-x-3">
-              <div className="relative">
-                <video
-                  ref={videoRef}
-                  className="w-24 h-18 object-cover rounded border"
-                  autoPlay
-                  muted
-                  playsInline
-                />
-                <div className="absolute top-1 right-1 bg-black bg-opacity-75 text-white text-xs px-1 rounded">
-                  {faceCount}
-                </div>
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-gray-900">Face Detection</div>
-                <div className="text-xs text-gray-600">{faceDetectionStatus}</div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {faceCount === 1 ? '✅ Good' : faceCount === 0 ? '⚠️ No face' : '❌ Multiple faces'}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* Hidden audio element */}
         <audio ref={audioRef} />

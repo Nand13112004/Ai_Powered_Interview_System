@@ -12,23 +12,85 @@ router.get('/', async (req, res) => {
       .populate('interviewId', 'title duration level role')
       .sort({ createdAt: -1 });
 
+    const Response = require('../models/Response');
+    const Question = require('../models/Question');
+    
+    // Fetch all responses for these sessions to auto-grade MCQs
+    const sessionIds = sessions.map(s => s._id.toString());
+    const responses = await Response.find({ sessionId: { $in: sessionIds } }).lean();
+    
+    const questionIds = [...new Set(responses.map(r => r.questionId))];
+    const questions = await Question.find({ _id: { $in: questionIds } }).lean();
+    const qMap = {};
+    questions.forEach(q => qMap[q._id.toString()] = q);
+
+    const responsesBySession = {};
+    responses.forEach(r => {
+       if (!responsesBySession[r.sessionId]) responsesBySession[r.sessionId] = [];
+       responsesBySession[r.sessionId].push(r);
+    });
+
     // Transform sessions to match client expectations
-    const transformedSessions = sessions.map(session => ({
-      id: session._id,
-      status: session.status,
-      startedAt: session.startedAt || session.createdAt,
-      completedAt: session.completedAt,
-      duration: session.duration,
-      interview: {
-        id: session.interviewId._id,
-        title: session.interviewId.title,
-        duration: session.interviewId.duration,
-        level: session.interviewId.level,
-        role: session.interviewId.role
-      },
-      scores: session.scores,
-      feedback: session.feedback
-    }));
+    const transformedSessions = sessions.map(session => {
+      let calculatedScores = session.scores;
+      let calculatedDuration = session.duration;
+      
+      // Auto-compute duration if missing but interview was completed
+      if (!calculatedDuration && session.startedAt && session.completedAt) {
+        calculatedDuration = Math.round((new Date(session.completedAt) - new Date(session.startedAt)) / 60000);
+      }
+      if (calculatedDuration === 0) calculatedDuration = 1; // minimum 1 min to look better
+      
+      // Auto-grade MCQs if no AI scores were generated
+      if (!calculatedScores && responsesBySession[session._id.toString()]) {
+         const sessionResponses = responsesBySession[session._id.toString()];
+         let correctMcq = 0;
+         let totalMcq = 0;
+
+         sessionResponses.forEach(r => {
+            const q = qMap[r.questionId];
+            if (q && (q.type === 'mcq' || (q.options && q.options.length > 0))) {
+               totalMcq++;
+               const correct = q.correctAnswer?.toLowerCase();
+               const selected = (r.answerText || r.text || '')?.charAt(0).toLowerCase();
+               if (correct && selected === correct) correctMcq++;
+            }
+         });
+
+         if (totalMcq > 0) {
+            const overall = Math.round((correctMcq / totalMcq) * 10);
+            calculatedScores = {
+               overall: overall,
+               communication: overall,
+               technical: overall,
+               problemSolving: overall
+            };
+         }
+      }
+
+      return {
+        id: session._id,
+        status: session.status,
+        startedAt: session.startedAt || session.createdAt,
+        completedAt: session.completedAt,
+        duration: calculatedDuration,
+        interview: session.interviewId ? {
+          id: session.interviewId._id,
+          title: session.interviewId.title,
+          duration: session.interviewId.duration,
+          level: session.interviewId.level,
+          role: session.interviewId.role
+        } : {
+          id: 'unknown',
+          title: 'Deleted Interview',
+          duration: 0,
+          level: 'Unknown',
+          role: 'Unknown'
+        },
+        scores: calculatedScores,
+        feedback: session.feedback
+      };
+    });
 
     res.json({ sessions: transformedSessions });
   } catch (error) {
@@ -372,27 +434,6 @@ router.post('/complete/:sessionId', async (req, res) => {
     }
 
     await session.save();
-
-    // Stop Python cheating detection script for this session
-    try {
-      const stopResponse = await fetch('http://localhost:3001/stop-python', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sessionId: sessionId
-        }),
-      });
-      
-      if (stopResponse.ok) {
-        logger.info(`Python cheating detection stopped for session ${sessionId}`);
-      } else {
-        logger.warn(`Failed to stop Python script for session ${sessionId}: ${stopResponse.statusText}`);
-      }
-    } catch (error) {
-      logger.warn(`Error stopping Python script for session ${sessionId}:`, error.message);
-    }
 
     logger.info(`Interview session ${sessionId} completed. Duration: ${duration} minutes`);
 

@@ -5,7 +5,14 @@ import InterviewRoom from '@/components/InterviewRoom'
 import { api } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 
-interface Question { id: string; text: string; number: number }
+interface Question {
+  id:            string
+  text:          string
+  number:        number
+  type:          string           // 'mcq' | 'text' | 'code'
+  options:       string[]         // MCQ options e.g. ['a) Yes', 'b) No', ...]
+  correctAnswer: string | null    // 'a' | 'b' | 'c' | 'd'
+}
 interface Interview {
   id: string
   title: string

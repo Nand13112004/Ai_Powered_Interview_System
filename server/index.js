@@ -10,6 +10,8 @@ const scoringRoutes = require('./routes/scoring');
 const generateQuestionsRoute = require('./routes/generateQuestions');
 const answersRouter = require('./routes/answers');
 const responsesRouter = require('./routes/responses');
+const aiRoutes = require('./routes/ai');
+const audioRoutes = require('./routes/audio');
 const { authenticateToken } = require('./middleware/auth');
 const { setupSocketHandlers } = require('./socket/handlers');
 const { logger } = require('./utils/logger');
@@ -36,9 +38,9 @@ securityConfig.forEach(middleware => app.use(middleware));
 // CORS
 app.use(corsMiddleware);
 
-// Body parsing
+// Body parsing — 50mb to accommodate base64 audio payloads
 app.use(express.json({
-  limit: process.env.MAX_REQUEST_SIZE || '10mb',
+  limit: process.env.MAX_REQUEST_SIZE || '50mb',
   verify: (req, res, buf) => {
     if (req.headers['content-type']?.includes('application/json')) {
       req.rawBody = buf;
@@ -47,7 +49,7 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({
   extended: true,
-  limit: process.env.MAX_REQUEST_SIZE || '10mb'
+  limit: process.env.MAX_REQUEST_SIZE || '50mb'
 }));
 
 // Request logging
@@ -80,6 +82,9 @@ app.use('/api/scoring', authenticateToken, scoringRoutes);
 app.use('/api/generate-questions', generateQuestionsRoute);
 app.use('/api/answers', answersRouter);
 app.use('/api/responses', responsesRouter);
+// Voice + AI pipeline routes
+app.use('/api/ai', authenticateToken, aiRoutes);
+app.use('/api/audio', authenticateToken, audioRoutes);
 
 // Socket.IO setup
 const io = socketIo(server, {
@@ -93,43 +98,6 @@ const io = socketIo(server, {
 });
 
 setupSocketHandlers(io);
-
-// Proctor namespace
-const proctorIo = io.of('/proctor');
-const ProctorEvent = require('./models/ProctorEvent');
-const Session = require('./models/Session');
-
-proctorIo.on('connection', (socket) => {
-  logger.info(`✅ Proctor client connected: ${socket.id}`);
-  socket.emit('connected', { msg: 'Connected to /proctor namespace' });
-
-  socket.on('proctor_event', async (payload) => {
-    try {
-      const { sessionId, type, meta, at } = payload || {};
-      logger.info(`📡 Proctor event: ${type} for session ${sessionId}`, { meta, at });
-
-      if (sessionId) {
-        const session = await Session.findById(sessionId);
-        if (!session) {
-          logger.warn(`⚠️ Invalid sessionId for proctor event: ${sessionId}`);
-          return;
-        }
-        await ProctorEvent.create({
-          sessionId,
-          type,
-          metadata: meta ? JSON.stringify(meta) : '{}',
-          createdAt: at ? new Date(at) : new Date()
-        });
-      }
-    } catch (err) {
-      logger.error('❌ Error handling proctor_event:', err);
-    }
-  });
-
-  socket.on('disconnect', () => {
-    logger.info(`❎ Proctor client disconnected: ${socket.id}`);
-  });
-});
 
 // Error handling
 app.use((err, req, res, next) => {

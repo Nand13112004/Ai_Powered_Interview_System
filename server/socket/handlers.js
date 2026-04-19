@@ -3,7 +3,6 @@ const { logger } = require('../utils/logger');
 const { handleInterviewSession } = require('./interviewHandler');
 const User = require('../models/User');
 const Session = require('../models/Session');
-const ProctorEvent = require('../models/ProctorEvent');
 
 // Using Mongoose models, no Prisma
 
@@ -169,93 +168,6 @@ const setupSocketHandlers = (io) => {
         socket.emit('error', { message: 'Failed to complete interview' });
       }
     });
-
-    // Proctoring: receive client incidents
-    socket.on('proctor_event', async (payload) => {
-  try {
-    const { sessionId, type, meta, at } = payload || {};
-    logger.info(`Proctor event: ${type} for session ${sessionId} by ${socket.user?.email}`, { meta, at });
-
-    if (sessionId) {
-      // Save to DB
-      try {
-        await ProctorEvent.create({
-          sessionId,
-          type,
-          metadata: typeof meta === 'string' ? meta : JSON.stringify(meta || {}),
-          createdAt: at ? new Date(at) : new Date()
-        });
-      } catch (dbErr) {
-        logger.warn('Proctor event DB save failed:', dbErr.message);
-      }
-
-      // Prepare meta for emitting
-      let metaForEmit = {};
-      if (typeof meta === 'string') {
-        try {
-          metaForEmit = JSON.parse(meta);
-        } catch (err) {
-          metaForEmit = {};
-        }
-      } else if (typeof meta === 'object' && meta !== null) {
-        metaForEmit = meta;
-      }
-
-      // Handle interview termination due to cheating
-      if (type === 'interview_terminated') {
-        logger.warn(`🚨 Interview terminated due to cheating for session ${sessionId}`);
-        
-        // Update session status to completed with cheating flag
-        try {
-          await Session.findByIdAndUpdate(sessionId, { 
-            status: 'completed', 
-            completedAt: new Date(),
-            cheatingDetected: true,
-            cheatingScore: metaForEmit.score || 0,
-            cheatingWarnings: metaForEmit.warnings || {}
-          });
-        } catch (dbErr) {
-          logger.warn('Failed to update session with cheating flag:', dbErr.message);
-        }
-
-        // Emit interview completion event to client
-        io.to(`interview_${sessionId}`).emit('interview_completed', {
-          sessionId,
-          reason: 'cheating_detected',
-          message: 'Interview terminated due to cheating detection',
-          cheatingScore: metaForEmit.score || 0,
-          warnings: metaForEmit.warnings || {}
-        });
-      }
-
-      // Relay to clients
-      io.to(`interview_${sessionId}`).emit('proctor_detection', { type, meta: metaForEmit, at });
-    }
-  } catch (err) {
-    logger.error('Error handling proctor_event:', err);
-  }
-});
-
-    // Proctoring: threshold breach
-    socket.on('proctor_threshold_breach', async (payload) => {
-      try {
-        const { sessionId, incidents } = payload || {}
-        logger.warn(`Proctor threshold breach for session ${sessionId} by ${socket.user?.email}. Incidents=${incidents}`)
-        if (prisma && sessionId) {
-          try {
-            await prisma.session.update({
-              where: { id: sessionId },
-              data: { status: 'completed', completedAt: new Date() }
-            })
-          } catch (e) {
-            logger.error('Failed to mark session completed on threshold breach:', e)
-          }
-        }
-        socket.emit('interview_completed', { sessionId, reason: 'proctor_threshold' })
-      } catch (err) {
-        logger.error('Error handling proctor_threshold_breach:', err)
-      }
-    })
 
     // Handle disconnection
     socket.on('disconnect', async (reason) => {

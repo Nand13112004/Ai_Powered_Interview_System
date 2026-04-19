@@ -40,7 +40,11 @@ export default function CreateInterview() {
 
   const updateQuestion = (index: number, value: string) => {
     const newQuestions = [...questions];
-    newQuestions[index] = value;
+    if (typeof newQuestions[index] === 'string') {
+      newQuestions[index] = value;
+    } else {
+      newQuestions[index] = { ...newQuestions[index], question: value };
+    }
     setQuestions(newQuestions);
   };
 
@@ -81,10 +85,18 @@ export default function CreateInterview() {
     setSuccess(false);
 
     try {
-      const filteredQuestions = questions.map((q) => {
+      const filteredQuestions = questions.filter((q) => {
         const questionText = typeof q === 'string' ? q : q.question || '';
-        return questionText.trim();
-      }).filter((q) => q !== "");
+        return questionText.trim() !== "";
+      }).map((q) => {
+        if (typeof q === 'string') {
+          return q.trim();
+        }
+        return {
+          ...q,
+          question: q.question.trim()
+        };
+      });
       if (filteredQuestions.length === 0) {
         throw new Error("At least one question is required");
       }

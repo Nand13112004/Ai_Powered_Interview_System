@@ -79,7 +79,7 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
               interviewId: sessionState.interview.id,
               sessionId,
               questionId: currentQuestion.id,
-              text: transcribedText || null,
+              answerText: transcribedText || null,
               audioData: audioBuffer
             });
             logger.info(`Response saved to database for question ${currentQuestion.id}`);
@@ -102,7 +102,7 @@ const handleInterviewSession = async (socket, sessionId, audioBlob, timestamp, t
         : sessionState.interview.questions[sessionState.currentQuestionIndex];
       if (currentQuestion) {
         try {
-          await Response.create({ userId: socket.userId, interviewId: sessionState.interview.id, sessionId, questionId: currentQuestion.id, text: transcribedText });
+          await Response.create({ userId: socket.userId, interviewId: sessionState.interview.id, sessionId, questionId: currentQuestion.id, answerText: transcribedText });
           logger.info(`Text response saved to database for question ${currentQuestion.id}`);
         } catch (dbError) {
           logger.warn('Failed to save text response to database:', dbError.message);
